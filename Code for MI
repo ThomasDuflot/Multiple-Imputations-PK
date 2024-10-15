@@ -1,0 +1,2294 @@
+library(mrgsolve)
+library(PopED)
+library(MASS) 
+library(dplyr) 
+library(ggplot2)
+library(missForest)
+library(rMIDAS)
+library(dplyr)
+library(mice)
+library(tidyr)
+library(ggsci)
+library(ggpubr)
+library(Amelia)
+library(xgboost)
+library(caret)
+
+my_theme <- theme_minimal(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 18, color = "black"),      # Axis labels size and color
+    axis.text = element_text(size = 16, color = "black"),       # Axis ticks size and color
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines size
+    legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
+    legend.text = element_text(size = 16, color = "black")      # Legend text size and color
+  )
+
+
+setwd("D:/MOBILITE/1er papier - Simulation Covariables/Figures")
+
+# Define the PK model
+code <- '
+$PROB
+$PARAM @annotated
+TVCL : 1  : 1  Clearance (L.h-1)
+TVVC : 10  : 2  Central volume (L)
+TVKA : 1  : 3  Absorption constant (L)
+
+
+$PARAM @annotated @covariates
+
+WT : 70 : Weight (kg)
+CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
+WT_VC : 1 : Weight on Vc ()
+CrCl_CL : -0.8 : Creatinine Clearance on CL
+PPI : 0 : PPI intake or not
+PPI_KA : 0.5 : Effect of Proton Pump Inhibitor on KA
+UM : 0 : Ultrarapid metabolizer
+UM_CL : 2 : Effect of UM on CL
+
+$CMT @annotated
+GUT : Depot compartment [ADM]
+CENTRAL : Central compartment (mg/L) [OBS]
+
+
+
+$TABLE
+double DV  = (CENTRAL / VC);
+
+
+$MAIN
+double CL = TVCL * pow((CrCl/90),CrCl_CL) * pow((UM_CL),UM)    ;
+double VC = TVVC * pow((WT/70),WT_VC)  ;
+double KA = TVKA * pow((PPI_KA),PPI)   ;
+double K10 = CL/VC ;
+
+
+
+$ODE
+
+dxdt_GUT        = -KA*GUT ;
+dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
+
+$CAPTURE DV CL VC KA'
+
+mod <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
+
+
+
+# Définir les moyennes et écarts-types pour chaque paramètre
+Height <- 170  # cm
+Height_sd <- 10
+
+WT <- 70  # kg
+WT_sd <- 15
+
+Alb <- 42  # g/L
+Alb_sd <- 4
+
+CrCl <- 90  # mL/min/1.73m2
+CrCl_sd <- 15
+
+Age <- 50  # ans
+Age_sd <- 15
+
+# Matrice de corrélation entre les paramètres
+# Ajout de l'Age avec des corrélations hypothétiques avec Poids, Albumine et Fonction rénale
+cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
+                       0.7, 1, 0, 0, 0.3,   # WT
+                       0, 0, 1, 0.5, -0.2,  # ALB
+                       0, 0, 0.5, 1, -0.4,  # CrCl
+                       0.2, 0.3, -0.2, -0.4, 1), # Age
+                     nrow=5, byrow=TRUE)
+
+# Moyennes des paramètres dans le même ordre que la matrice de corrélation
+moyennes <- c(Height, WT, Alb, CrCl, Age)
+
+# Écarts-types des paramètres
+sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
+
+# Calcul de la matrice de covariance à partir de la matrice de corrélation et des écarts-types
+cov_matrix <- cor_matrix * (sds %*% t(sds))
+
+# Générer 100 patients avec les distributions corrélées
+set.seed(123)  # Pour la reproductibilité
+sim_data <- mvrnorm(n = 100, mu = moyennes, Sigma = cov_matrix)
+
+# Convertir en dataframe et renommer les colonnes
+sim_data <- as.data.frame(sim_data)
+colnames(sim_data) <- c("Height", "WT", "Alb", "CrCl", "Age")
+
+# Afficher un aperçu des données simulées
+head(sim_data)
+
+sim_data$PPI <- rbinom(n = 100, size = 1, prob = 0.5)
+sim_data$UM <- rbinom(n = 100, size = 1, prob = 0.5)
+sim_data$ID <- 1:100
+
+# Optionnel : vérifier les corrélations dans les données simulées
+cor(sim_data)
+
+
+
+
+
+
+ff <- function(model_switch, xt, p, poped.db){
+  times_xt <- drop(xt)  
+  dose_times <- seq(from=0,to=max(times_xt),by=p[["TAU"]])
+  time <- sort(unique(c(times_xt,dose_times)))
+  is.dose <- time %in% dose_times
+  
+  data <- data.frame(
+    ID = 1,
+    time = time,
+    amt = ifelse(is.dose,p[["DOSE"]], 0), 
+    cmt = ifelse(is.dose, 1, 0)
+  )
+  
+  data[["evid"]] <- data[["cmt"]]
+  
+  mod <- param(mod, as.list(p))
+  
+  out <- mrgsim_q(mod,data)
+  
+  y <- out$DV[match(times_xt,out$time)]
+  
+  return(list(y=matrix(y,ncol=1),poped.db=poped.db))
+}
+  
+
+
+sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
+  parameters=c(TVCL=bpop[1]*exp(b[1])*exp(bpop[7]),
+               TVVC=bpop[2]*exp(b[2]),
+               TVKA=bpop[3]*exp(b[3]),
+               WT_VC=bpop[4],
+               CrCl_CL=bpop[5],
+               PPI_KA=bpop[6],
+               DOSE=a[1],
+               TAU =a[2],
+               WT  =a[3],
+               CrCl =a[4],
+               PPI  =a[5])
+  return(parameters) 
+}
+
+
+feps <- function(model_switch,xt,parameters,epsi,poped.db){
+  returnArgs <- do.call(poped.db$model$ff_pointer,list(model_switch,xt,parameters,poped.db)) 
+  y <- returnArgs[[1]]
+  poped.db <- returnArgs[[2]]
+  
+  y = y*(1+epsi[,1])+epsi[,2]
+  
+  return(list( y= y,poped.db =poped.db )) 
+}
+
+
+poped.cov_mrg_poped <- create.poped.database(
+  ff_fun=ff,
+  fg_fun=sfg.mrgsolve.cov,
+  fError_fun=feps,
+  bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
+  d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
+  notfixed_bpop=c(1,1,1,1,1,1,1),
+  sigma=c(prop=0.15^2,add=0.01^2),
+  notfixed_sigma=c(0,0),
+  m=100,
+  groupsize=1,
+  xt=c(0.25,0.5,4,36,40),
+  discrete_xt=c(0.25,0.5,1:40),
+  minxt=c(0),
+  maxxt=c(40),
+  a = cbind(DOSE=rep(100,100), TAU=rep(8,100), WT=c(rnorm(100, mean = 70, sd = 15)), CrCl=c(rnorm(100, mean = 90, sd = 15)),PPI=rbinom(n = 100, size = 1, prob = 0.5), UM=rbinom(n = 100, size = 1, prob = 0.5))
+)
+
+plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
+ev<-evaluate_design(poped.cov_mrg_poped)
+shrinkage(poped.cov_mrg_poped)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ff <- function(model_switch, xt, p, poped.db){
+  times_xt <- drop(xt)  
+  dose_times <- seq(from=0,to=max(times_xt),by=p[["TAU"]])
+  time <- sort(unique(c(times_xt,dose_times)))
+  is.dose <- time %in% dose_times
+  
+  data <- data.frame(
+    ID = 1,
+    time = time,
+    amt = ifelse(is.dose,p[["DOSE"]], 0), 
+    cmt = ifelse(is.dose, 1, 0)
+  )
+  
+  data[["evid"]] <- data[["cmt"]]
+  
+  mod <- param(mod, as.list(p))
+  
+  out <- mrgsim_q(mod,data)
+  
+  y <- out$DV[match(times_xt,out$time)]
+  
+  return(list(y=matrix(y,ncol=1),poped.db=poped.db))
+}
+  
+
+
+sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
+  parameters=c(TVCL=bpop[1]*exp(b[1])*exp(bpop[7]),
+               TVVC=bpop[2]*exp(b[2]),
+               TVKA=bpop[3]*exp(b[3]),
+               WT_VC=bpop[4],
+               CrCl_CL=bpop[5],
+               PPI_KA=bpop[6],
+               DOSE=a[1],
+               TAU =a[2],
+               WT  =a[3],
+               CrCl =a[4],
+               PPI  =a[5])
+  return(parameters) 
+}
+
+
+feps <- function(model_switch,xt,parameters,epsi,poped.db){
+  returnArgs <- do.call(poped.db$model$ff_pointer,list(model_switch,xt,parameters,poped.db)) 
+  y <- returnArgs[[1]]
+  poped.db <- returnArgs[[2]]
+  
+  y = y*(1+epsi[,1])+epsi[,2]
+  
+  return(list( y= y,poped.db =poped.db )) 
+}
+
+
+poped.cov_mrg_poped <- create.poped.database(
+  ff_fun=ff,
+  fg_fun=sfg.mrgsolve.cov,
+  fError_fun=feps,
+  bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
+  d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
+  notfixed_bpop=c(1,1,1,1,1,1,1),
+  sigma=c(prop=0.15^2,add=0.01^2),
+  notfixed_sigma=c(0,0),
+  m=100,
+  groupsize=1,
+  xt=c(0.25,0.5,4,36,40),
+  discrete_xt=c(0.25,0.5,1:40),
+  minxt=c(0),
+  maxxt=c(40),
+  a = cbind(DOSE=rep(100,100), TAU=rep(8,100), WT=sim_data$WT, CrCl=sim_data$CrCl,PPI=sim_data$PPI,UM=sim_data$UM)
+)
+
+plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
+ev<-evaluate_design(poped.cov_mrg_poped)
+ev
+shrinkage(poped.cov_mrg_poped)
+
+
+
+
+
+
+
+
+
+
+# Define the PK model
+codeb <- '
+$PROB
+
+$PARAM @annotated
+TVCL : 1  : 1  Clearance (L.h-1)
+TVVC : 10  : 2  Central volume (L)
+TVKA : 1  : 3  Absorption constant (L)
+
+
+$PARAM @annotated @covariates
+
+WT : 70 : Weight (kg)
+CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
+PPI : 0 : PPI intake or not
+UM : 0 : Ultrarapid metabolizer
+WT_VC : 1 : Weight on Vc ()
+CrCl_CL : -0.8 : Creatinine Clearance on CL
+PPI_KA : 0.5 : Effect of Proton Pump Inhibitor on KA
+UM_CL : 2 : Effect of UM on CL
+
+$OMEGA @block
+0.09 // CL
+0 0.09 // VC
+0 0 0.09 // KA
+
+
+$SIGMA 
+0.0225 // err prop
+0.0001 //  err additive
+
+
+$CMT @annotated
+GUT : Depot compartment [ADM]
+CENTRAL : Central compartment (mg/L) [OBS]
+
+
+
+$TABLE
+double DV  = (CENTRAL / VC)+ (EPS(2)+(CENTRAL / VC)*EPS(1)) ;
+
+
+$MAIN
+double CL = TVCL * pow((CrCl/90),CrCl_CL) * pow((UM_CL),UM) *exp(ETA(1))    ;
+double VC = TVVC * pow((WT/70),WT_VC)*exp(ETA(2))  ;
+double KA = TVKA * pow((PPI_KA),PPI)*exp(ETA(3))   ;
+double K10 = CL/VC ;
+
+
+
+$ODE
+
+dxdt_GUT        = -KA*GUT ;
+dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
+
+$CAPTURE DV CL VC KA'
+
+modbsv <- mrgsolve::mcode("optim", codeb, atol=1e-8, rtol=1e-8,maxsteps=5000)
+
+
+
+ev1 <- ev(amt = 100, cmt = 1,ii=8,addl=4)
+out <- 
+  modbsv %>% 
+  ev(ev1) %>%
+  idata_set(sim_data) %>%
+  mrgsim(delta=0.05, end=40, obsonly=TRUE)
+
+out
+plot(out)
+
+
+# Define the time sequence (from 0 to 40 by 0.05)
+time_grid <- seq(0, 40, by = 0.05)
+
+# Expand sim_data to create a new dataframe with time grid
+expanded_sim_data <- sim_data[rep(1:nrow(sim_data), each = length(time_grid)), ]
+expanded_sim_data$time <- rep(time_grid, nrow(sim_data))
+
+# Initialize amt, evid, and cmt columns
+expanded_sim_data$amt <- 0
+expanded_sim_data$evid <- 0
+expanded_sim_data$cmt <- 0
+
+# Define dosing regimen: 100 mg every 8 hours until 40 hours
+dosing_times <- seq(0, 40, by = 8)
+
+# Apply the dosing regimen for each subject
+for (i in 1:nrow(sim_data)) {
+  # Get rows corresponding to the current subject
+  subject_rows <- expanded_sim_data$ID == sim_data$ID[i]
+  
+  # Assign amt, evid, and cmt for the dosing times
+  expanded_sim_data$amt[subject_rows & expanded_sim_data$time %in% dosing_times] <- 100
+  expanded_sim_data$evid[subject_rows & expanded_sim_data$time %in% dosing_times] <- 1
+  expanded_sim_data$cmt[subject_rows & expanded_sim_data$time %in% dosing_times] <- 1
+}
+
+# Check the expanded dataframe
+head(expanded_sim_data)
+
+# Merge expanded_sim_data and out based on 'ID' and 'time'
+merged_data <- merge(expanded_sim_data, as.data.frame(out), by = c("ID", "time"))
+
+# Check the merged data
+head(merged_data)
+
+
+# Filter merged_data to keep only rows where 'time' is 0,0.25, 0.5, 4, 6, 8, or 40
+filtered_data <- merged_data[merged_data$time %in% c(0, 0.25,0.5, 4, 6, 8,16,24,32,36, 40), ]
+
+# Check the filtered data
+head(filtered_data)
+
+# Step 1: Identify rows to duplicate (time is 8 or 40, amt == 100, evid == 1)
+rows_to_duplicate <- filtered_data[filtered_data$time %in% c(8, 40) & filtered_data$amt == 100 & filtered_data$evid == 1, ]
+
+
+# Step 2: Duplicate the rows
+duplicated_rows <- rows_to_duplicate
+
+# Step 3: Set amt and evid to 0 in the duplicated rows
+duplicated_rows$amt <- 0
+duplicated_rows$evid <- 0
+
+# Step 4: Append the duplicated rows back to the original dataframe
+final_data <- rbind(filtered_data, duplicated_rows)
+
+# Step 5: Sort the final_data by ID and time to maintain order (optional)
+final_data <- final_data[order(final_data$ID, final_data$time), ]
+
+final_data_mice <-final_data
+final_data_mice$PPI<-as.factor(as.character(final_data_mice$PPI))
+final_data_mice$UM<-as.factor(as.character(final_data_mice$UM))
+
+
+
+
+
+
+
+# Define the columns you want to use for imputation
+selected_columns <- c(1:9, 15)  # Columns: ID, time, 3:9, and DV (column 14)
+
+
+
+
+# Create a list to store dataframes with different percentages of missing data
+missing_data_list <- list()
+
+# Define the percentages of missing data to generate (5%, 20%, 50% and 75%)
+percentages <- c(5, 20, 50,75)
+
+# Get the unique IDs and the number of individuals
+unique_ids <- unique(final_data$ID)
+n_individuals <- length(unique_ids)
+
+# Step 1: Create missing data for WT, CrCl, and PPI
+introduce_missing_data <- function(df, variable, percentage) {
+  n_missing <- round(n_individuals * percentage / 100)
+  individuals_to_missing <- sample(unique_ids, n_missing, replace = FALSE)
+  df[df$ID %in% individuals_to_missing, variable] <- NA
+  return(df)
+}
+
+# Loop over each percentage and generate the corresponding dataframe with missing data
+for (perc in percentages) {
+  data_with_missing <- final_data_mice
+  data_with_missing <- introduce_missing_data(data_with_missing, "CrCl", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "WT", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "PPI", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "UM", perc)
+  missing_data_list[[paste0("missing_", perc, "perc")]] <- data_with_missing
+}
+
+
+
+
+
+
+
+# Initialize the list for storing imputed data
+mice_imputed_data_list <- list()
+
+# Define the imputation methods:
+# pmm for WT and CrCl (continuous), logreg for PPI and UM (binomial),
+mice_imputation_methods <- c("", "","","pmm","", "pmm","", "logreg","logreg","")
+
+# Loop through each dataframe with missing data for imputation
+for (i in 1:length(missing_data_list)) {
+  
+  # Subset the data to the relevant columns (including all potential predictors)
+  mice_df_subset <- missing_data_list[[i]][, selected_columns]
+
+  # Create a predictorMatrix to handle clustering by ID
+  mice_predictorMatrix <- make.predictorMatrix(mice_df_subset)
+  
+  # Specify that ID should be used for clustering but not as a predictor
+  mice_predictorMatrix[, "ID"] <- -2  # Cluster by ID
+  mice_predictorMatrix["ID", ] <- 0   # ID shouldn't be a predictor
+  
+  # Perform the imputation using all variables as predictors
+  # Use DV and time as predictors along with WT, CrCl, PPI, etc.
+  mice_imputed_data <- mice(
+    mice_df_subset, 
+    m = 5,  # Perform multiple imputations
+    method = mice_imputation_methods,  # Imputation methods for each variable
+    predictorMatrix = mice_predictorMatrix, 
+    seed = 500
+  )
+  
+  # Store the completed (imputed) dataset in the list
+  mice_imputed_data_list[[paste0("mice_imputed_data_", i)]] <- mice::complete(mice_imputed_data)
+  
+  # Adjust imputed data to enforce consistency within each ID
+  for (id in unique(mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$ID)) {
+    idx <- mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$ID == id  # Get all rows for the specific ID
+    
+    # Calculate the mean for WT and CrCl, and the most frequent value for PPI
+    mean_WT <- mean(mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$WT[idx], na.rm = TRUE)
+    mean_CrCl <- mean(mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$CrCl[idx], na.rm = TRUE)
+    most_frequent_PPI <- as.numeric(names(sort(table(mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$PPI[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    most_frequent_UM <- as.numeric(names(sort(table(mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$UM[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    # Replace all values within that ID with the calculated values
+    mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$WT[idx] <- mean_WT
+    mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$CrCl[idx] <- mean_CrCl
+    mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$PPI[idx] <- most_frequent_PPI
+    mice_imputed_data_list[[paste0("mice_imputed_data_", i)]]$UM[idx] <- most_frequent_UM
+  }
+}
+
+
+
+
+# Create a vector for the missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Initialize lists to store results
+WT_errors <- list()
+CrCl_errors <- list()
+PPI_concordance <- list()
+UM_concordance <- list()
+
+# Loop through the missing and imputed datasets
+for (i in 1:length(missing_data_list)) {
+  
+  # Extract missing rows from the current missing_data_list
+  missing_WT <- missing_data_list[[i]] %>% filter(is.na(WT))
+  missing_CrCl <- missing_data_list[[i]] %>% filter(is.na(CrCl))
+  missing_PPI <- missing_data_list[[i]] %>% filter(is.na(PPI))
+  missing_UM <- missing_data_list[[i]] %>% filter(is.na(UM))
+ 
+  # Extract corresponding imputed data
+  imputed_WT <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_WT$ID)
+  imputed_CrCl <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_CrCl$ID)
+  imputed_PPI <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$ID)
+  imputed_UM <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$UM)  
+  # Match imputed with original data and compute errors for WT
+  WT_error <- imputed_WT %>%
+    inner_join(final_data %>% select(ID, WT), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%  # Keep only first row of each ID
+    mutate(WT_imputed = WT.x, WT_original = WT.y,
+           AE_WT = abs(WT_imputed - WT_original),
+           PE_WT = (WT_imputed - WT_original) / WT_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "Mice")
+  
+  # Match imputed with original data and compute errors for CrCl
+  CrCl_error <- imputed_CrCl %>%
+    inner_join(final_data %>% select(ID, CrCl), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl.y,
+           AE_CrCl = abs(CrCl_imputed - CrCl_original),
+           PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "Mice")
+  
+  # Match imputed with original data and compute concordance for PPI
+  PPI_conc <- imputed_PPI %>%
+    inner_join(final_data %>% select(ID, PPI), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(PPI_imputed = PPI.x, PPI_original = PPI.y,
+           ConcordancePPI = PPI_imputed == PPI_original,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "Mice")
+  UM_conc <- imputed_PPI %>%
+    inner_join(final_data %>% select(ID, UM), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(UM_imputed = UM.x, UM_original = UM.y,
+           ConcordanceUM = UM_imputed == UM_original,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "Mice")  
+
+
+  # Store the results in the lists
+  WT_errors[[i]] <- WT_error
+  CrCl_errors[[i]] <- CrCl_error
+  PPI_concordance[[i]] <- PPI_conc
+  UM_concordance[[i]] <- UM_conc
+}
+
+# Combine the results into single dataframes for WT, CrCl, and PPI
+WT_errors_combined <- bind_rows(WT_errors)
+CrCl_errors_combined <- bind_rows(CrCl_errors)
+PPI_concordance_combined <- bind_rows(PPI_concordance)
+UM_concordance_combined <- bind_rows(UM_concordance)
+
+# Combine the dataframes using cbind without joining by ID
+mice_combined_data <- cbind(
+  WT_errors_combined %>% select(ID, AE_WT, PE_WT, Missing_Values, Imputation_Method),
+  CrCl_errors_combined %>% select(AE_CrCl, PE_CrCl),
+  PPI_concordance_combined %>% select(ConcordancePPI),
+  UM_concordance_combined %>% select(ConcordanceUM)
+)
+
+# View the combined dataframe
+mice_combined_data
+
+
+
+
+
+
+
+
+
+
+
+
+MF_imputed_data_list <- list()  # Initialize an empty list to store the results
+
+for (i in seq_along(missing_data_list)) {
+  # Perform the imputation with missForest
+  MF_imputed_result <- missForest(missing_data_list[[i]][, selected_columns], 
+                                  maxiter = 50, 
+                                  ntree = 300, 
+                                  replace = TRUE, 
+                                  variablewise = TRUE)
+  
+  # Extract the imputed data (ximp contains the completed dataset)
+  MF_imputed_data <- MF_imputed_result[[1]]
+  
+  # Store the imputed data in the list
+  MF_imputed_data_list[[paste0("MF_imputed_data_", i)]] <- MF_imputed_data
+  
+  # Adjust imputed data to enforce consistency within each ID
+  for (id in unique(MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$ID)) {
+    idx <- MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$ID == id  # Get all rows for the specific ID
+    
+    # Calculate the mean for WT and CrCl, and the most frequent value for PPI
+    mean_WT <- mean(MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$WT[idx], na.rm = TRUE)
+    mean_CrCl <- mean(MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$CrCl[idx], na.rm = TRUE)
+    most_frequent_PPI <- as.numeric(names(sort(table(MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$PPI[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    most_frequent_UM <- as.numeric(names(sort(table(MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$UM[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+
+    # Replace all values within that ID with the calculated values
+    MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$WT[idx] <- mean_WT
+    MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$CrCl[idx] <- mean_CrCl
+    MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$PPI[idx] <- most_frequent_PPI
+    MF_imputed_data_list[[paste0("MF_imputed_data_", i)]]$UM[idx] <- most_frequent_UM
+  }
+}
+
+
+
+
+# Create a vector for the missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Initialize lists to store results
+WT_errors <- list()
+CrCl_errors <- list()
+PPI_concordance <- list()
+UM_concordance <- list()
+
+# Loop through the missing and imputed datasets
+for (i in 1:length(missing_data_list)) {
+  
+  # Extract missing rows from the current missing_data_list
+  missing_WT <- missing_data_list[[i]] %>% filter(is.na(WT))
+  missing_CrCl <- missing_data_list[[i]] %>% filter(is.na(CrCl))
+  missing_PPI <- missing_data_list[[i]] %>% filter(is.na(PPI))
+  missing_UM <- missing_data_list[[i]] %>% filter(is.na(UM))
+ 
+  # Extract corresponding imputed data
+  imputed_WT <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_WT$ID)
+  imputed_CrCl <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_CrCl$ID)
+  imputed_PPI <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$ID)
+  imputed_UM <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$UM)  
+
+  
+  # Match imputed with original data and compute errors for WT
+  WT_error <- imputed_WT %>%
+    inner_join(final_data %>% select(ID, WT), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%  # Keep only first row of each ID
+    mutate(WT_imputed = WT.x, WT_original = WT.y,
+           AE_WT = abs(WT_imputed - WT_original),
+           PE_WT = (WT_imputed - WT_original) / WT_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MF")
+  
+  # Match imputed with original data and compute errors for CrCl
+  CrCl_error <- imputed_CrCl %>%
+    inner_join(final_data %>% select(ID, CrCl), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl.y,
+           AE_CrCl = abs(CrCl_imputed - CrCl_original),
+           PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MF")
+  
+  # Match imputed with original data and compute concordance for PPI
+  PPI_conc <- imputed_PPI %>%
+    inner_join(final_data %>% select(ID, PPI), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(PPI_imputed = PPI.x, PPI_original = PPI.y,
+           ConcordancePPI = PPI_imputed == PPI_original,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MF")
+  UM_conc <- imputed_PPI %>%
+    inner_join(final_data %>% select(ID, UM), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(UM_imputed = UM.x, UM_original = UM.y,
+           ConcordanceUM = UM_imputed == UM_original,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MF")
+  
+  # Store the results in the lists
+  WT_errors[[i]] <- WT_error
+  CrCl_errors[[i]] <- CrCl_error
+  PPI_concordance[[i]] <- PPI_conc
+  UM_concordance[[i]] <- UM_conc
+}
+
+# Combine the results into single dataframes for WT, CrCl, and PPI
+WT_errors_combined <- bind_rows(WT_errors)
+CrCl_errors_combined <- bind_rows(CrCl_errors)
+PPI_concordance_combined <- bind_rows(PPI_concordance)
+UM_concordance_combined <- bind_rows(UM_concordance)
+
+# Combine the dataframes using cbind without joining by ID
+MF_combined_data <- cbind(
+  WT_errors_combined %>% select(ID, AE_WT, PE_WT, Missing_Values, Imputation_Method),
+  CrCl_errors_combined %>% select(AE_CrCl, PE_CrCl),
+  PPI_concordance_combined %>% select(ConcordancePPI),
+  UM_concordance_combined %>% select(ConcordanceUM)
+)
+
+# View the combined dataframe
+MF_combined_data
+
+
+
+
+# Initialize the list to store imputed datasets
+MIDAS_imputed_data_list <- list()
+
+# Define binary column
+MIDAS_bin <- c('PPI','UM')  # PPI and UM are binary
+
+# Import numpy from Python (via reticulate package if necessary)
+np <- import("numpy")
+
+# Loop over each dataset with missing data
+for(i in seq_along(missing_data_list)) {
+  
+  # Replace NAs with NA for the current data frame (rMIDAS handles NA internally)
+  missing_data_list[[i]] <- as.data.frame(lapply(missing_data_list[[i]], function(x) {
+    ifelse(is.na(x), NA, x)  # Convert NAs for rMIDAS
+  }))
+  
+  # Apply rMIDAS preprocessing steps
+  # Ensure DV, time, Height, Alb, etc., are included as predictors
+  MIDAS_conv <- rMIDAS::convert(missing_data_list[[i]][, selected_columns], 
+                        bin_cols = MIDAS_bin, 
+                        minmax_scale = TRUE)  # Normalize for neural network
+  
+  # Train the rMIDAS model
+  MIDAS_train <- rMIDAS::train(MIDAS_conv,
+                       training_epochs = 50,           # Number of training epochs
+                       layer_structure = c(256, 128,64,32,16),  # Hidden layers
+                       input_drop = 0.8,              # Dropout to prevent overfitting
+                       seed = 89)                      # Set a seed for reproducibility
+  
+  # Perform imputation with the trained model (m=1 for single imputation)
+  MIDAS_complete <- rMIDAS::complete(MIDAS_train, m = 1)
+  
+  # Extract the imputed data
+  MIDAS_complete_df <- MIDAS_complete[[1]]
+
+  # Adjust imputed data for consistency within each ID
+  for (id in unique(MIDAS_complete_df$ID)) {
+    idx <- MIDAS_complete_df$ID == id  # Get all rows for the specific ID
+    
+    # Calculate mean for WT and CrCl, and the most frequent value for PPI
+    mean_WT <- mean(MIDAS_complete_df$WT[idx], na.rm = TRUE)
+    mean_CrCl <- mean(MIDAS_complete_df$CrCl[idx], na.rm = TRUE)
+    most_frequent_PPI <- as.numeric(names(sort(table(MIDAS_complete_df$PPI[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    most_frequent_UM <- as.numeric(names(sort(table(MIDAS_complete_df$UM[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+
+    # Replace all values within that ID with the calculated values
+    MIDAS_complete_df$WT[idx] <- mean_WT
+    MIDAS_complete_df$CrCl[idx] <- mean_CrCl
+    MIDAS_complete_df$PPI[idx] <- most_frequent_PPI
+    MIDAS_complete_df$UM[idx] <- most_frequent_UM
+  }
+  
+  # Store the adjusted completed data in the list
+  MIDAS_imputed_data_list[[i]] <- MIDAS_complete_df
+}
+
+
+# Loop through each data frame in the list
+for (i in seq_along(MIDAS_imputed_data_list)) {
+  #MIDAS_imputed_data_list[[i]]$ID <- as.integer(MIDAS_imputed_data_list[[i]]$ID)   # Convert ID to integer
+  MIDAS_imputed_data_list[[i]]$PPI <- as.numeric(as.character(MIDAS_imputed_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
+  MIDAS_imputed_data_list[[i]]$UM <- as.numeric(as.character(MIDAS_imputed_data_list[[i]]$UM)) - 1  # Convert PPI to numeric and reduce by 1
+}
+
+
+
+for (i in seq_along(missing_data_list)) {
+  missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
+  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM)) - 1  # Convert PPI to numeric and reduce by 1
+}
+
+
+
+
+# Create a vector for the missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Initialize lists to store results
+WT_errors <- list()
+CrCl_errors <- list()
+PPI_concordance <- list()
+UM_concordance <- list()
+
+# Loop through the missing and imputed datasets
+for (i in 1:length(missing_data_list)) {
+  
+  # Extract missing rows from the current missing_data_list
+  missing_data <- missing_data_list[[i]]
+  
+  # Get indices of rows with NA values for WT, CrCl, and PPI
+  na_indices_WT <- which(is.na(missing_data$WT))
+  na_indices_CrCl <- which(is.na(missing_data$CrCl))
+  na_indices_PPI <- which(is.na(missing_data$PPI))
+  na_indices_UM <- which(is.na(missing_data$UM))
+  
+  # Retrieve the corresponding imputed values using the indices
+  imputed_WT <- MIDAS_imputed_data_list[[i]][na_indices_WT, ]
+  imputed_CrCl <- MIDAS_imputed_data_list[[i]][na_indices_CrCl, ]
+  imputed_PPI <- MIDAS_imputed_data_list[[i]][na_indices_PPI, ]
+  imputed_UM <- MIDAS_imputed_data_list[[i]][na_indices_UM, ]
+  
+  # Ensure IDs are unique in the imputed data
+  imputed_WT <- imputed_WT %>% distinct(ID, .keep_all = TRUE)
+  imputed_CrCl <- imputed_CrCl %>% distinct(ID, .keep_all = TRUE)
+  imputed_PPI <- imputed_PPI %>% distinct(ID, .keep_all = TRUE)
+  imputed_UM <- imputed_UM %>% distinct(ID, .keep_all = TRUE)
+
+  # Match imputed with original data and compute errors for WT
+  WT_error <- imputed_WT %>%
+    left_join(final_data %>% select(ID, WT), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(WT_imputed = WT.x, WT_original = WT,
+           AE_WT = abs(WT_imputed - WT_original),
+           PE_WT = (WT_imputed - WT_original) / WT_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MIDAS")
+  
+  # Match imputed with original data and compute errors for CrCl
+  CrCl_error <- imputed_CrCl %>%
+    left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+           AE_CrCl = abs(CrCl_imputed - CrCl_original),
+           PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MIDAS");
+
+  # Match imputed with original data and compute concordance for PPI
+PPI_conc <- imputed_PPI %>%
+  left_join(final_data %>% select(ID, PPI), by = "ID") %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  mutate(PPI_imputed = PPI.x, PPI_original = PPI.y,  # Adjust this line based on the column names
+         ConcordancePPI = PPI_imputed == PPI_original,
+         Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+         Imputation_Method = "MIDAS")
+UM_conc <- imputed_UM %>%
+    left_join(final_data %>% select(ID, UM), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(UM_imputed = UM.x, UM_original = UM.y,
+           ConcordanceUM = UM_imputed == UM_original,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "MIDAS")
+
+  # Store the results in the lists
+  WT_errors[[i]] <- WT_error
+  CrCl_errors[[i]] <- CrCl_error
+  PPI_concordance[[i]] <- PPI_conc
+  UM_concordance[[i]] <- UM_conc
+}
+
+# Combine the results into single dataframes for WT, CrCl, and PPI
+WT_errors_combined <- bind_rows(WT_errors)
+CrCl_errors_combined <- bind_rows(CrCl_errors)
+PPI_concordance_combined <- bind_rows(PPI_concordance)
+UM_concordance_combined <- bind_rows(UM_concordance)
+
+# Combine the dataframes using cbind without joining by ID
+MIDAS_combined_data <- cbind(
+  WT_errors_combined %>% select(ID, AE_WT, PE_WT, Missing_Values, Imputation_Method),
+  CrCl_errors_combined %>% select(AE_CrCl, PE_CrCl),
+  PPI_concordance_combined %>% select(ConcordancePPI),
+  UM_concordance_combined %>% select(ConcordanceUM)
+)
+
+# View the combined dataframe
+MIDAS_combined_data
+
+
+
+
+
+
+
+
+
+# Initialize an empty list to store the imputed datasets
+amelia_imputed_data_list <- list()
+
+for (i in seq_along(missing_data_list)) {
+    # Perform the imputation with Amelia
+    amelia_result <- amelia(missing_data_list[[i]][, selected_columns], 
+                            m = 1,     # Generate 1 imputed datasets for more robust results
+                            idvars = "ID",  # Treat 'ID' as an identifier
+                            noms = c("PPI","UM"),   # Treat 'PPI' as a categorical variable
+                            ts = "time",    # Specify time-series structure
+                            tolerance = 1e-05,    # Stricter convergence criteria
+                            empri = 0.01,    # Stricter convergence criteria
+                            polytime = 3)   # Capture linear time effects
+    
+    # Extract the imputed data (taking the first imputed dataset here)
+    amelia_imputed_data <- amelia_result$imputations[[1]]  # Extract one imputed dataset
+    
+    # Store the imputed data in the list
+    amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]] <- amelia_imputed_data
+    
+    # (Optional: Post-processing to ensure consistency within each ID)
+    for (id in unique(amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$ID)) {
+        idx <- amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$ID == id
+        
+        # Calculate the mean for WT and CrCl, and the most frequent value for PPI
+        mean_WT <- mean(amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$WT[idx], na.rm = TRUE)
+        mean_CrCl <- mean(amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$CrCl[idx], na.rm = TRUE)
+        most_frequent_PPI <- as.numeric(names(sort(table(amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$PPI[idx]), decreasing = TRUE)[1]))
+        most_frequent_UM <- as.numeric(names(sort(table(amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$UM[idx]), decreasing = TRUE)[1]))
+        
+        # Replace all values within that ID with the calculated values
+        amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$WT[idx] <- mean_WT
+        amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$CrCl[idx] <- mean_CrCl
+        amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$PPI[idx] <- most_frequent_PPI
+        amelia_imputed_data_list[[paste0("amelia_imputed_data_", i)]]$UM[idx] <- most_frequent_UM
+    }
+}
+
+
+
+# Loop through each data frame in the list
+for (i in seq_along(amelia_imputed_data_list)) {
+  #amelia_imputed_data_list[[i]]$ID <- as.integer(amelia_imputed_data_list[[i]]$ID)   # Convert ID to integer
+  amelia_imputed_data_list[[i]]$PPI <- as.numeric(as.character(amelia_imputed_data_list[[i]]$PPI))   # Convert PPI to numeric and reduce by 1
+  amelia_imputed_data_list[[i]]$UM <- as.numeric(as.character(amelia_imputed_data_list[[i]]$UM))   # Convert PPI to numeric and reduce by 1
+}
+
+
+# Create a vector for the missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Initialize lists to store results
+WT_errors <- list()
+CrCl_errors <- list()
+PPI_concordance <- list()
+UM_concordance <- list()
+
+# Loop through the missing and imputed datasets
+for (i in 1:length(missing_data_list)) {
+  
+  # Extract missing rows from the current missing_data_list
+  missing_data <- missing_data_list[[i]]
+  
+  # Get indices of rows with NA values for WT, CrCl, and PPI
+  na_indices_WT <- which(is.na(missing_data$WT))
+  na_indices_CrCl <- which(is.na(missing_data$CrCl))
+  na_indices_PPI <- which(is.na(missing_data$PPI))
+  na_indices_UM <- which(is.na(missing_data$UM))  
+
+  # Retrieve the corresponding imputed values using the indices
+  imputed_WT <- amelia_imputed_data_list[[i]][na_indices_WT, ]
+  imputed_CrCl <- amelia_imputed_data_list[[i]][na_indices_CrCl, ]
+  imputed_PPI <- amelia_imputed_data_list[[i]][na_indices_PPI, ]
+  imputed_UM <- amelia_imputed_data_list[[i]][na_indices_UM, ]
+  
+  # Ensure IDs are unique in the imputed data
+  imputed_WT <- imputed_WT %>% distinct(ID, .keep_all = TRUE)
+  imputed_CrCl <- imputed_CrCl %>% distinct(ID, .keep_all = TRUE)
+  imputed_PPI <- imputed_PPI %>% distinct(ID, .keep_all = TRUE)
+  imputed_UM <- imputed_UM %>% distinct(ID, .keep_all = TRUE)
+
+  # Match imputed with original data and compute errors for WT
+  WT_error <- imputed_WT %>%
+    left_join(final_data %>% select(ID, WT), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(WT_imputed = WT.x, WT_original = WT,
+           AE_WT = abs(WT_imputed - WT_original),
+           PE_WT = (WT_imputed - WT_original) / WT_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "amelia")
+  
+  # Match imputed with original data and compute errors for CrCl
+  CrCl_error <- imputed_CrCl %>%
+    left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+           AE_CrCl = abs(CrCl_imputed - CrCl_original),
+           PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "amelia");
+
+  # Match imputed with original data and compute concordance for PPI
+PPI_conc <- imputed_PPI %>%
+  left_join(final_data %>% select(ID, PPI), by = "ID") %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  mutate(PPI_imputed = PPI.x, PPI_original = PPI.y,  # Adjust this line based on the column names
+         ConcordancePPI = PPI_imputed == PPI_original,
+         Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+         Imputation_Method = "amelia")
+UM_conc <- imputed_UM %>%
+  left_join(final_data %>% select(ID, UM), by = "ID") %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  mutate(UM_imputed = UM.x, UM_original = UM.y,  # Adjust this line based on the column names
+         ConcordanceUM = UM_imputed == UM_original,
+         Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+         Imputation_Method = "amelia")
+
+  # Store the results in the lists
+  WT_errors[[i]] <- WT_error
+  CrCl_errors[[i]] <- CrCl_error
+  PPI_concordance[[i]] <- PPI_conc
+  UM_concordance[[i]] <- UM_conc
+}
+
+# Combine the results into single dataframes for WT, CrCl, and PPI
+WT_errors_combined <- bind_rows(WT_errors)
+CrCl_errors_combined <- bind_rows(CrCl_errors)
+PPI_concordance_combined <- bind_rows(PPI_concordance)
+UM_concordance_combined <- bind_rows(UM_concordance)
+
+# Combine the dataframes using cbind without joining by ID
+amelia_combined_data <- cbind(
+  WT_errors_combined %>% select(ID, AE_WT, PE_WT, Missing_Values, Imputation_Method),
+  CrCl_errors_combined %>% select(AE_CrCl, PE_CrCl),
+  PPI_concordance_combined %>% select(ConcordancePPI),
+  UM_concordance_combined %>% select(ConcordanceUM)
+)
+
+# View the combined dataframe
+amelia_combined_data
+
+
+
+
+
+
+
+
+for (i in seq_along(missing_data_list)) {
+  missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI))   # Convert PPI to numeric 
+  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM))  # Convert PPI to numeric 
+}
+
+
+# Initialize the list to store imputed datasets
+XGB_imputed_data_list <- list()
+
+# Set parameters for XGBoost
+params_continuous <- list(
+  booster = "gbtree",
+  objective = "reg:squarederror",  # For continuous variables (WT, CrCl)
+  eval_metric = "rmse",
+  max_depth = 6,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+params_binary <- list(
+  booster = "gbtree",
+  objective = "binary:logistic",  # For binary variable (PPI)
+  eval_metric = "logloss",
+  max_depth = 6,
+  eta = 0.1,
+  subsample = 0.8,
+  colsample_bytree = 0.8
+)
+
+# Helper function to scale continuous variables between 0 and 1
+scale_data <- function(data) {
+  scaled_data <- as.data.frame(scale(data))
+  attr(scaled_data, "scaled:center") <- attr(scale(data), "scaled:center")
+  attr(scaled_data, "scaled:scale") <- attr(scale(data), "scaled:scale")
+  return(scaled_data)
+}
+
+# Helper function to reverse scaling
+reverse_scale <- function(scaled_data, original_data) {
+  scaled_center <- attr(scaled_data, "scaled:center")
+  scaled_scale <- attr(scaled_data, "scaled:scale")
+  original_data <- (scaled_data * scaled_scale) + scaled_center
+  return(original_data)
+}
+
+# Function to impute continuous variables using XGBoost
+impute_xgboost_continuous <- function(data, target_column, params) {
+  complete_cases <- !is.na(data[[target_column]])
+  incomplete_cases <- is.na(data[[target_column]])
+  
+  # Split data into predictors (features) and target (response)
+  x_train <- data[complete_cases, !(names(data) %in% c(target_column))]
+  y_train <- data[complete_cases, target_column]
+  
+  x_test <- data[incomplete_cases, !(names(data) %in% c(target_column))]
+
+  # Scale continuous data for training and testing
+  x_train_scaled <- scale_data(x_train)
+  x_test_scaled <- scale_data(x_test)
+  
+  # Convert to XGBoost matrix format
+  dtrain <- xgb.DMatrix(data = as.matrix(x_train_scaled), label = y_train)
+  dtest <- xgb.DMatrix(data = as.matrix(x_test_scaled))
+  
+  # Cross-validation to determine the best number of rounds
+  cv <- xgb.cv(
+    params = params, 
+    data = dtrain, 
+    nrounds = 1000, 
+    nfold = 5, 
+    early_stopping_rounds = 10, 
+    print_every_n = 10
+  )
+  best_nrounds <- cv$best_iteration
+  
+  # Train the final model using best number of rounds
+  model <- xgb.train(params = params, data = dtrain, nrounds = best_nrounds)
+  
+  # Predict missing values
+  predictions <- predict(model, dtest)
+  
+  # Fill in the missing values with predictions
+  data[incomplete_cases, target_column] <- predictions
+  
+  return(data)
+}
+
+# Function to impute binary variables using XGBoost
+impute_xgboost_binary <- function(data, target_column, params) {
+  complete_cases <- !is.na(data[[target_column]])
+  incomplete_cases <- is.na(data[[target_column]])
+  
+  # Split data into predictors (features) and target (response)
+  x_train <- data[complete_cases, !(names(data) %in% c(target_column))]
+  y_train <- data[complete_cases, target_column]
+  
+  x_test <- data[incomplete_cases, !(names(data) %in% c(target_column))]
+  
+  # Convert to XGBoost matrix format
+  dtrain <- xgb.DMatrix(data = as.matrix(x_train), label = y_train)
+  dtest <- xgb.DMatrix(data = as.matrix(x_test))
+  
+  # Cross-validation to determine the best number of rounds
+  cv <- xgb.cv(
+    params = params, 
+    data = dtrain, 
+    nrounds = 1000, 
+    nfold = 5, 
+    early_stopping_rounds = 10, 
+    print_every_n = 10
+  )
+  best_nrounds <- cv$best_iteration
+  
+  # Train the final model using best number of rounds
+  model <- xgb.train(params = params, data = dtrain, nrounds = best_nrounds)
+  
+  # Predict missing values
+  predictions <- predict(model, dtest)
+  
+  # Threshold predictions at 0.5 to determine class labels (binary classification)
+  data[incomplete_cases, target_column] <- ifelse(predictions > 0.5, 1, 0)
+  
+  return(data)
+}
+
+# Loop through each dataset with missing data
+for (i in seq_along(missing_data_list)) {
+  
+  # Make a copy of the dataset
+  data <- missing_data_list[[i]][, selected_columns]
+  
+  # Impute continuous variables (WT and CrCl)
+  data <- impute_xgboost_continuous(data, "WT", params_continuous)
+  data <- impute_xgboost_continuous(data, "CrCl", params_continuous)
+  
+  # Impute binary variable (PPI)
+  data <- impute_xgboost_binary(data, "PPI", params_binary)
+  data <- impute_xgboost_binary(data, "UM", params_binary)  
+
+  # Store the imputed dataset
+  XGB_imputed_data_list[[paste0("XGB_imputed_data_", i)]] <- data
+  
+  # Optional: Post-process to ensure consistency within each ID (like in your original script)
+  for (id in unique(data$ID)) {
+    idx <- data$ID == id  # Get all rows for the specific ID
+    
+    # Calculate mean for WT and CrCl, and the most frequent value for PPI
+    mean_WT <- mean(data$WT[idx], na.rm = TRUE)
+    mean_CrCl <- mean(data$CrCl[idx], na.rm = TRUE)
+    most_frequent_PPI <- as.numeric(names(sort(table(data$PPI[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    most_frequent_UM <- as.numeric(names(sort(table(data$UM[idx]), decreasing = TRUE)[1]))  # Most frequent 0 or 1
+    
+    # Replace all values within that ID with the calculated values
+    data$WT[idx] <- mean_WT
+    data$CrCl[idx] <- mean_CrCl
+    data$PPI[idx] <- most_frequent_PPI
+    data$UM[idx] <- most_frequent_PPI
+  }
+  
+  # Store the adjusted data back into the list
+  XGB_imputed_data_list[[paste0("XGB_imputed_data_", i)]] <- data
+}
+
+
+
+# Create a vector for the missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Initialize lists to store results
+WT_errors <- list()
+CrCl_errors <- list()
+PPI_concordance <- list()
+UM_concordance <- list()
+
+# Loop through the missing and imputed datasets
+for (i in 1:length(missing_data_list)) {
+  
+  # Extract missing rows from the current missing_data_list
+  missing_data <- missing_data_list[[i]]
+  
+  # Get indices of rows with NA values for WT, CrCl, and PPI
+  na_indices_WT <- which(is.na(missing_data$WT))
+  na_indices_CrCl <- which(is.na(missing_data$CrCl))
+  na_indices_PPI <- which(is.na(missing_data$PPI))
+  na_indices_UM <- which(is.na(missing_data$UM))
+  
+  # Retrieve the corresponding imputed values using the indices
+  imputed_WT <- XGB_imputed_data_list[[i]][na_indices_WT, ]
+  imputed_CrCl <- XGB_imputed_data_list[[i]][na_indices_CrCl, ]
+  imputed_PPI <- XGB_imputed_data_list[[i]][na_indices_PPI, ]
+  imputed_UM <- XGB_imputed_data_list[[i]][na_indices_UM, ]
+  
+  # Ensure IDs are unique in the imputed data
+  imputed_WT <- imputed_WT %>% distinct(ID, .keep_all = TRUE)
+  imputed_CrCl <- imputed_CrCl %>% distinct(ID, .keep_all = TRUE)
+  imputed_PPI <- imputed_PPI %>% distinct(ID, .keep_all = TRUE)
+  imputed_UM <- imputed_UM %>% distinct(ID, .keep_all = TRUE)
+
+  # Match imputed with original data and compute errors for WT
+  WT_error <- imputed_WT %>%
+    left_join(final_data %>% select(ID, WT), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(WT_imputed = WT.x, WT_original = WT,
+           AE_WT = abs(WT_imputed - WT_original),
+           PE_WT = (WT_imputed - WT_original) / WT_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "XGB")
+  
+  # Match imputed with original data and compute errors for CrCl
+  CrCl_error <- imputed_CrCl %>%
+    left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
+    distinct(ID, .keep_all = TRUE) %>%
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+           AE_CrCl = abs(CrCl_imputed - CrCl_original),
+           PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
+           Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+           Imputation_Method = "XGB");
+
+  # Match imputed with original data and compute concordance for PPI
+PPI_conc <- imputed_PPI %>%
+  left_join(final_data %>% select(ID, PPI), by = "ID") %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  mutate(PPI_imputed = PPI.x, PPI_original = PPI.y,  # Adjust this line based on the column names
+         ConcordancePPI = PPI_imputed == PPI_original,
+         Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+         Imputation_Method = "XGB")
+UM_conc <- imputed_UM %>%
+  left_join(final_data %>% select(ID, UM), by = "ID") %>%
+  distinct(ID, .keep_all = TRUE) %>%
+  mutate(UM_imputed = UM.x, UM_original = UM.y,  # Adjust this line based on the column names
+         ConcordanceUM = UM_imputed == UM_original,
+         Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
+         Imputation_Method = "XGB")
+;
+
+  # Store the results in the lists
+  WT_errors[[i]] <- WT_error
+  CrCl_errors[[i]] <- CrCl_error
+  PPI_concordance[[i]] <- PPI_conc
+  UM_concordance[[i]] <- UM_conc
+}
+
+# Combine the results into single dataframes for WT, CrCl, and PPI
+WT_errors_combined <- bind_rows(WT_errors)
+CrCl_errors_combined <- bind_rows(CrCl_errors)
+PPI_concordance_combined <- bind_rows(PPI_concordance)
+UM_concordance_combined <- bind_rows(UM_concordance)
+
+# Combine the dataframes using cbind without joining by ID
+XGB_combined_data <- cbind(
+  WT_errors_combined %>% select(ID, AE_WT, PE_WT, Missing_Values, Imputation_Method),
+  CrCl_errors_combined %>% select(AE_CrCl, PE_CrCl),
+  PPI_concordance_combined %>% select(ConcordancePPI),
+  UM_concordance_combined %>% select(ConcordanceUM)
+)
+
+# View the combined dataframe
+XGB_combined_data
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Ensure the column names are consistent (optional, depending on your specific case)
+# If necessary, rename columns in one or more data frames to ensure consistency.
+
+# Merging the data frames by rows
+combined_data <- bind_rows(
+  MIDAS_combined_data %>% mutate(Imputation_Method = "MIDAS"),
+  MF_combined_data %>% mutate(Imputation_Method = "MF"),
+  mice_combined_data %>% mutate(Imputation_Method = "Mice"),
+  amelia_combined_data %>% mutate(Imputation_Method = "amelia"),
+  XGB_combined_data %>% mutate(Imputation_Method = "XGB"),
+)
+
+# View the combined data frame
+print(combined_data)
+
+
+long_combined_data <- combined_data %>%
+  pivot_longer(cols = c(AE_WT, PE_WT, AE_CrCl, PE_CrCl), 
+               names_to = c("ErrorType", "Variable"), 
+               names_sep = "_") %>%
+  mutate(ErrorType = factor(ErrorType, levels = c("AE", "PE")))  # Set the order of ErrorType
+
+
+
+AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = Imputation_Method)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA, color = "black", linewidth = 1.2) +  # Thicker boxplot borders
+  geom_point(color = "black", position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.75), alpha = 1, size = 0.6, show.legend = FALSE) +  # Black points without legend
+  facet_grid(ErrorType ~ Variable, scales = "free_y") +  # Facet by ErrorType in rows and Variable in columns
+  labs(title = "Comparison of AE and PE for WT and CrCl by Percentage of Missing Data",
+       x = "Percentage of Missing Data",
+       y = "Error Value",
+       fill = "Imputation Method") +
+  scale_color_jco() +  # Color scheme for lines
+  scale_fill_jco() +   # Fill color scheme for ribbons
+  my_theme +  # Apply your custom theme
+  theme(strip.background = element_rect(fill = "grey90", color = "grey50"),  # Grey background and border
+        strip.text = element_text(face = "bold", color = "black"))  # Bold text for facet labels
+
+
+png("AE_PE_comparison.png", width = 12, height = 9, units = 'in', res = 900)  # Specify width, height, and resolution
+
+AEPE_plot
+
+# Close the device
+dev.off()
+
+
+
+
+
+
+
+# Merge the five imputed dataset lists into a single list
+
+
+# Assuming 'combined_data' already contains both PPI and UM variables
+
+combined_data <- combined_data %>%
+  rename(PPI = ConcordancePPI, UM = ConcordanceUM)
+
+# Count the number of TRUE/FALSE for PPI, grouped by Imputation_Method and Missing_Values
+concordance_summary_PPI <- combined_data %>%
+  group_by(Imputation_Method, Missing_Values, PPI) %>%
+  summarise(Count = n()) %>%
+  arrange(Imputation_Method, Missing_Values)
+
+# Count the number of TRUE/FALSE for UM, grouped by Imputation_Method and Missing_Values
+concordance_summary_UM <- combined_data %>%
+  group_by(Imputation_Method, Missing_Values, UM) %>%
+  summarise(Count = n()) %>%
+  arrange(Imputation_Method, Missing_Values)
+
+# Filter out rows with NA in PPI and UM
+concordance_summary_PPI_filtered <- concordance_summary_PPI %>% filter(!is.na(PPI))
+concordance_summary_UM_filtered <- concordance_summary_UM %>% filter(!is.na(UM))
+
+# Calculate percentages for TRUE/FALSE concordance within each combination of Imputation_Method and Missing_Values
+concordance_summary_PPI_pct <- concordance_summary_PPI_filtered %>%
+  group_by(Imputation_Method, Missing_Values) %>%
+  mutate(Percent = 100 * Count / sum(Count))  # Calculate percentage within each group
+
+concordance_summary_UM_pct <- concordance_summary_UM_filtered %>%
+  group_by(Imputation_Method, Missing_Values) %>%
+  mutate(Percent = 100 * Count / sum(Count))  # Calculate percentage within each group
+
+# Ensure both TRUE and FALSE categories are present for consistent bar widths
+concordance_summary_PPI_pct <- concordance_summary_PPI_pct %>%
+  complete(PPI = c(TRUE, FALSE), fill = list(Count = 0, Percent = 0))
+
+concordance_summary_UM_pct <- concordance_summary_UM_pct %>%
+  complete(UM = c(TRUE, FALSE), fill = list(Count = 0, Percent = 0))
+
+# Create the bar plot for PPI
+PPI_Plot <- ggplot(concordance_summary_PPI_pct, aes(x = Missing_Values, y = Percent, fill = PPI)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", linewidth = 1.2) +
+  geom_text(aes(label = Count, y = 28), position = position_dodge(width = 0.8), 
+            vjust = 0, size = 3.5, fontface = "bold") +
+  facet_wrap(~ Imputation_Method, scales = "free", ncol = 2) +
+  labs(title = "Concordance for PPI (TRUE/FALSE) by Imputation Method and Missing Data",
+       x = "Percentage of Missing Data",
+       y = "Frequency (%) of TRUE/FALSE Concordance",
+       fill = "Concordance (PPI)") +
+  scale_fill_jco() +
+  theme_minimal(base_size = 14) +
+  scale_x_discrete(drop = FALSE) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    strip.placement = "outside",
+    plot.margin = margin(2, 2, 2, 2, "cm")
+  ) +
+  my_theme  # Apply your custom theme
+
+# Create the bar plot for UM
+UM_Plot <- ggplot(concordance_summary_UM_pct, aes(x = Missing_Values, y = Percent, fill = UM)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.8), color = "black", linewidth = 1.2) +
+  geom_text(aes(label = Count, y = 28), position = position_dodge(width = 0.8), 
+            vjust = 0, size = 3.5, fontface = "bold") +
+  facet_wrap(~ Imputation_Method, scales = "free", ncol = 2) +
+  labs(title = "Concordance for UM (TRUE/FALSE) by Imputation Method and Missing Data",
+       x = "Percentage of Missing Data",
+       y = "Frequency (%) of TRUE/FALSE Concordance",
+       fill = "Concordance (UM)") +
+  scale_fill_jco() +
+  theme_minimal(base_size = 14) +
+  scale_x_discrete(drop = FALSE) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(face = "bold"),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),
+    strip.placement = "outside",
+    plot.margin = margin(2, 2, 2, 2, "cm")
+  ) +
+  my_theme  # Apply your custom theme
+
+# Save the PPI Plot
+png("PPI_comparison.png", width = 12, height = 9, units = 'in', res = 900)
+print(PPI_Plot)
+dev.off()
+
+# Save the UM Plot
+png("UM_comparison.png", width = 12, height = 9, units = 'in', res = 900)
+print(UM_Plot)
+dev.off()
+
+
+
+
+
+
+merged_imputed_data_list <- c(
+  mice_imputed_data_list,
+  MF_imputed_data_list,
+  MIDAS_imputed_data_list,
+  amelia_imputed_data_list,
+  XGB_imputed_data_list
+)
+
+# Append final_data to the merged list
+merged_imputed_data_list$final_data <- final_data
+
+# Check the structure of the merged list (including final_data)
+str(merged_imputed_data_list)
+
+# Optionally, print the names of the datasets for verification
+names(merged_imputed_data_list) <- c(
+  paste0("mice_", seq_along(mice_imputed_data_list)),
+  paste0("MF_", seq_along(MF_imputed_data_list)),
+  paste0("MIDAS_", seq_along(MIDAS_imputed_data_list)),
+  paste0("amelia_", seq_along(amelia_imputed_data_list)),
+  paste0("XGB_", seq_along(XGB_imputed_data_list)),
+  "final_data"
+)
+
+# Check the first few dataset names in the merged list
+head(names(merged_imputed_data_list))
+
+
+
+
+
+
+# Define the time points where new rows should be added (dosing times)
+dosing_times <- c(0, 8, 16, 24, 32, 40)
+
+# Define the allowed times for rows with amt = 0, evid = 0
+allowed_times <- c(0.25,0.5, 4,36, 40)
+
+# Function to add columns and rows for each dataset and remove unwanted rows
+modify_dataset_add_rows <- function(data) {
+  # Get unique IDs
+  unique_ids <- unique(data$ID)
+  
+  # Initialize an empty data frame to store the modified data
+  expanded_data <- data.frame()
+  
+  # Loop through each ID and add new rows at dosing times
+  for (id in unique_ids) {
+    # Subset the data for the current ID
+    id_data <- data[data$ID == id, ]
+    
+    # Create new rows for dosing times by copying the first row of id_data
+    new_rows <- id_data[1:length(dosing_times), ]
+    
+    # Set the time for the new rows
+    new_rows$time <- dosing_times
+    
+    # Assign amt, evid, and cmt for the new rows
+    new_rows$amt <- 100
+    new_rows$evid <- 1
+    new_rows$cmt <- 1
+    
+    # Set DV to NA for the new rows (as DV doesn't exist at these times)
+    new_rows$DV <- NA
+    
+    # Set amt, evid, and cmt for existing rows in id_data to 0
+    id_data$amt <- 0
+    id_data$evid <- 0
+    id_data$cmt <- 0
+    
+    # Combine the original rows with the new dosing rows
+    combined_data <- rbind(id_data, new_rows)
+    
+    # Sort the combined data by time
+    combined_data <- combined_data[order(combined_data$time), ]
+    
+    # Remove rows where EVID = 0 and AMT = 0 outside the allowed times
+    combined_data <- combined_data[!(combined_data$evid == 0 & combined_data$amt == 0 & !combined_data$time %in% allowed_times), ]
+    
+    # Handle duplicates at times 8 and 40 where EVID = 0, keeping only the first instance
+    for (t in c(8, 40)) {
+      duplicated_condition <- which(combined_data$time == t & combined_data$evid == 0)
+      
+      # If there are multiple rows matching the condition, remove all but the first
+      if (length(duplicated_condition) > 1) {
+        combined_data <- combined_data[-duplicated_condition[-1], ]  # Keep only the first duplicate
+      }
+    }
+    
+    # Append to the expanded_data
+    expanded_data <- rbind(expanded_data, combined_data)
+  }
+  
+  return(expanded_data)
+}
+
+# Apply the function to each dataset in the merged list
+for (i in seq_along(merged_imputed_data_list)) {
+  merged_imputed_data_list[[i]] <- modify_dataset_add_rows(merged_imputed_data_list[[i]])
+}
+
+# Check the result for the first dataset in the merged list
+head(merged_imputed_data_list[[1]], 40)
+
+
+# Identify the last dataframe (which has 18 columns)
+last_df <- merged_imputed_data_list[[length(merged_imputed_data_list)]]
+
+# Extract the last 5 columns from the last dataframe
+last_5_columns <- last_df[, (ncol(last_df) - 4):ncol(last_df)]
+
+# Loop through the first 20 dataframes and add the last 5 columns
+for (i in 1:20) {
+  # Add the last 5 columns to each dataframe in the list
+  merged_imputed_data_list[[i]] <- cbind(merged_imputed_data_list[[i]], last_5_columns)
+}
+
+# Now check the result for one of the first 20 dataframes to ensure the columns have been added
+head(merged_imputed_data_list[[1]], 10)
+
+
+# Define the column order from final_data
+final_data_columns <- c("ID", "time", "Height", "WT", "Alb", "CrCl", "Age", "PPI",
+                        "UM", "amt", "evid", "cmt", "GUT", "CENTRAL", "DV", "CL", 
+                        "VC", "KA")
+
+# Reorder columns in each dataframe in merged_imputed_data_list
+for (i in seq_along(merged_imputed_data_list)) {
+  # Only reorder columns if all required columns are present in the dataframe
+  common_columns <- intersect(final_data_columns, colnames(merged_imputed_data_list[[i]]))
+  merged_imputed_data_list[[i]] <- merged_imputed_data_list[[i]][, common_columns, drop = FALSE]
+  
+  # If there are any missing columns in the current dataframe, add them as NA
+  missing_columns <- setdiff(final_data_columns, colnames(merged_imputed_data_list[[i]]))
+  for (col in missing_columns) {
+    merged_imputed_data_list[[i]][, col] <- NA
+  }
+  
+  # Ensure the final column order matches final_data
+  merged_imputed_data_list[[i]] <- merged_imputed_data_list[[i]][, final_data_columns]
+}
+
+# Now all dataframes in merged_imputed_data_list should have the same column order as final_data
+
+
+
+
+# Define the base directory by removing the "Figures" part
+base_directory <- "D:/MOBILITE/1er papier - Simulation Covariables"
+
+# Define the new folder to store the imputed datasets
+imputed_datasets_folder <- file.path(base_directory, "imputed_datasets_merged")
+
+# Create the new folder if it doesn't exist
+if (!dir.exists(imputed_datasets_folder)) {
+  dir.create(imputed_datasets_folder)
+}
+
+# Save each dataframe in merged_imputed_data_list to a CSV file using its name
+for (i in seq_along(merged_imputed_data_list)) {
+  # Get the name of the current dataframe
+  df_name <- names(merged_imputed_data_list)[i]
+  
+  # Define the file name and path based on the dataframe name
+  file_name <- paste0(df_name, ".csv")
+  file_path <- file.path(imputed_datasets_folder, file_name)
+  
+  # Write the dataframe to CSV
+  write.csv(merged_imputed_data_list[[i]], file = file_path, row.names = FALSE)
+}
+
+# Print a message indicating completion
+print("Merged imputed dataframes have been successfully exported into 'imputed_datasets_merged'.")
+
+
+
+
+
+
+# Exclude final_data
+filtered_combined_data <- combined_subset_data %>%
+  filter(Imputation_Method != "final")  # Exclude final data
+
+# Reorder Missing_Percentage and Imputation_Method as factors
+filtered_combined_data$Missing_Percentage <- factor(filtered_combined_data$Missing_Percentage,
+                                                  levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+
+filtered_combined_data$Imputation_Method <- factor(filtered_combined_data$Imputation_Method,
+                                                 levels = c("amelia", "MF", "mice", "MIDAS", "XGB"))
+
+# Corrected function to match density with the histogram by dividing by the binwidth and add custom fill, spacing, and proper legend
+plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
+  binwidth_value <- ifelse(variable == "WT", 2, 2)  # Define binwidth
+  
+  ggplot(data, aes_string(x = variable)) +
+    # Histogram with appropriate binwidth
+    geom_histogram(aes(y = ..count.., fill = Imputation_Method),  
+                   binwidth = binwidth_value,  # Adjust bin width
+                   color = "black", alpha = 0.7, show.legend = TRUE) +
+    
+    # Gaussian curve for each subset
+    stat_function(fun = function(x) {
+      data_subset <- data[data$Imputation_Method == unique(data$Imputation_Method) &
+                          data$Missing_Percentage == unique(data$Missing_Percentage), ]
+      mean_val <- mean(data_subset[[variable]], na.rm = TRUE)
+      sd_val <- sd(data_subset[[variable]], na.rm = TRUE)
+      dnorm(x, mean = mean_val, sd = sd_val) * nrow(data_subset) * binwidth_value  # Adjust for bin width
+    }, aes(linetype = "Gaussian Distribution", color = "Gaussian Distribution"), size = 1, show.legend = TRUE) +  # Map linetype and color to legend
+    
+    # Density curve properly scaled by dividing by the binwidth
+    geom_density(aes(y = ..density.. * 100 * binwidth_value, linetype = "Density Estimate", color = "Density Estimate"),  # Adjust for correct scaling
+                 size = 1, alpha = 0.5, show.legend = TRUE) +  # Density curve
+    
+    # Facet by Missing_Percentage and Imputation_Method with custom spacing
+    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+    
+    # Add the color palette from ggsci
+    scale_fill_jco() +
+    
+    # Add manual legends for Gaussian and Density Estimate, both with solid lines and color differentiation
+    scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +  # Both solid
+    scale_color_manual(name = "Legend", values = c("Gaussian Distribution" = "blue", "Density Estimate" = "red")) +  # Blue for Gaussian, Red for Density
+    
+    labs(title = paste("Distribution of", variable_name),
+         x = variable_name,
+         y = "Count") +
+    
+    # Custom theme with spacing and legend
+    my_theme +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      strip.text = element_text(face = "bold"),
+      
+      # Add spacing between facets for better separation
+      panel.spacing = unit(1, "lines"),  # Adjust the spacing as needed
+      
+      # Ensure that axis labels are shown for all plots, not just the left and bottom
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      axis.text.y = element_text(),
+      
+      # Move the legend to the top right for better visibility
+      legend.position = "top",
+      
+      # Customize the legend key appearance to have white background and no border
+      legend.key = element_rect(fill = "white", color = "black"),  # White background for squares, black border
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(size = 12),
+      
+      # Add grey borders to each facet panel
+      panel.border = element_rect(color = "grey", fill = NA, size = 1),  # Grey border for facets
+      strip.background = element_rect(fill = "grey", color = "grey", size = 1)  # Grey border around facet label
+    ) +
+    
+    # Custom guides for the legend, overriding the background fill inside the legend keys
+    guides(
+      fill = guide_legend(title = "Imputation Method"),
+      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),  # Ensure correct color and white background
+      color = "none"  # Disable separate color legend
+    )
+}
+
+# Plot for WT
+WT_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_data, "WT", "Weight (WT)")
+
+# Save the plot for WT
+png("WT_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
+print(WT_Plot_fixed)
+dev.off()
+
+# Plot for CrCl
+CrCl_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_data, "CrCl", "Creatinine Clearance (CrCl)")
+
+# Save the plot for CrCl
+png("CrCl_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
+print(CrCl_Plot_fixed)
+dev.off()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Load necessary libraries
+library(dplyr)
+
+# Rename percentages for missing data
+percentages <- c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")
+
+# Map of imputation methods to the names used in the dataframe list
+method_map <- c("mice", "MF", "MIDAS", "amelia", "XGB")
+
+# Initialize an empty list to store the subsetted data
+subsetted_data_list <- list()
+
+# Add final_data with 0% missing data, keeping the ID column
+final_data <- merged_imputed_data_list[["final_data"]] %>%
+  select(ID, WT, CrCl) %>%
+  mutate(Imputation_Method = "final", Missing_Percentage = "0% NA") %>%
+  distinct(ID, .keep_all = TRUE)  # Keep only the first row of each ID
+subsetted_data_list[["final_data"]] <- final_data
+
+# Loop through the imputation methods and percentages of missing data
+for (method in method_map) {
+    for (i in 1:4) {
+        df_name <- paste0(method, "_", i)
+        
+        # Check if the dataframe exists before processing
+        if (!is.null(merged_imputed_data_list[[df_name]])) {
+          data <- merged_imputed_data_list[[df_name]] %>%
+            select(ID, WT, CrCl) %>%
+            mutate(
+              Imputation_Method = method,                     # String before "_"
+              Missing_Percentage = percentages[i + 1]  # String after "_", skipping "0% NA"
+            ) %>%
+            distinct(ID, .keep_all = TRUE)  # Keep only the first row of each ID
+        
+          # Store the result in the list
+          subsetted_data_list[[df_name]] <- data
+        } else {
+          message(paste("Dataframe", df_name, "not found, skipping."))
+        }
+    }
+}
+
+# Combine all subsetted dataframes into a single dataframe
+combined_subset_data <- bind_rows(subsetted_data_list)
+
+# View the combined dataframe structure
+str(combined_subset_data)
+
+# If you want to save the combined data:
+# write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
+
+
+# Modify the function to import data as dataframes with proper column separation
+import_monolix_data <- function(subfolder) {
+  # Paths to additional subfolders
+  log_likelihood_folder <- file.path(subfolder, "LogLikelihood")
+  tests_folder <- file.path(subfolder, "Tests")
+  
+  # Paths to main folder files
+  population_parameters_file <- file.path(subfolder, "populationParameters.txt")
+  predictions_file <- file.path(subfolder, "predictions.txt")
+  
+  # Paths to files in subfolders
+  log_likelihood_file <- file.path(log_likelihood_folder, "logLikelihood.txt")
+  correlation_file <- file.path(tests_folder, "correlationIndividualParametersCovariates.txt")
+  
+  # Path to the IndividualParameters folder
+  ind_param_folder <- file.path(subfolder, "IndividualParameters")
+  
+  # Initialize an empty list to store dataframes
+  combined_data <- list()
+  
+  # Define the separator used in your .txt files (e.g., "\t" for tab-separated, "," for CSV)
+  separator <- ","  # Adjust this based on the actual file structure
+  
+  # Check if the folders and files exist and import them
+  if (dir.exists(ind_param_folder)) {
+    param_file <- file.path(ind_param_folder, "estimatedIndividualParameters.txt")
+    random_effects_file <- file.path(ind_param_folder, "estimatedRandomEffects.txt")
+    shrinkage_file <- file.path(ind_param_folder, "shrinkage.txt")
+    
+    if (file.exists(param_file)) {
+      param_data <- read.table(param_file, header = TRUE, sep = separator)
+      combined_data[["parameters"]] <- param_data
+    }
+    if (file.exists(random_effects_file)) {
+      random_effects_data <- read.table(random_effects_file, header = TRUE, sep = separator)
+      combined_data[["random_effects"]] <- random_effects_data
+    }
+    if (file.exists(shrinkage_file)) {
+      shrinkage_data <- read.table(shrinkage_file, header = TRUE, sep = separator)
+      combined_data[["shrinkage"]] <- shrinkage_data
+    }
+    if (file.exists(log_likelihood_file)) {
+      log_likelihood_data <- read.table(log_likelihood_file, header = TRUE, sep = separator)
+      combined_data[["log_likelihood"]] <- log_likelihood_data
+    }
+    if (file.exists(correlation_file)) {
+      correlation_data <- read.table(correlation_file, header = TRUE, sep = separator)
+      combined_data[["correlation"]] <- correlation_data
+    }
+    if (file.exists(population_parameters_file)) {
+      population_parameters_data <- read.table(population_parameters_file, header = TRUE, sep = separator)
+      combined_data[["population_parameters"]] <- population_parameters_data
+    }
+    if (file.exists(predictions_file)) {
+      predictions_data <- read.table(predictions_file, header = TRUE, sep = separator)
+      combined_data[["predictions"]] <- predictions_data
+    }
+    
+    # Combine all dataframes into one, adding the folder name as a variable
+    final_df <- do.call(cbind, combined_data)
+    final_df$Folder <- basename(subfolder)  # Add folder name as a new column
+    
+    return(final_df)
+  } else {
+    message("Folder not found: ", ind_param_folder)
+    return(NULL)
+  }
+}
+
+# Apply the function to each subfolder and combine results into a single dataframe
+all_data <- do.call(rbind, lapply(subfolders, import_monolix_data))
+
+# Example: View the combined dataframe
+head(all_data)
+
+
+# Define the base directory where the Monolix folder is located
+base_dir <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
+
+# List all directories inside the Monolix folder (amelia_1, MF_1, etc.)
+subfolders <- list.dirs(base_dir, full.names = TRUE, recursive = FALSE)
+
+
+
+# Modify the function to import data as dataframes and keep them in a list
+import_monolix_data <- function(subfolder) {
+  # Paths to additional subfolders
+  log_likelihood_folder <- file.path(subfolder, "LogLikelihood")
+  tests_folder <- file.path(subfolder, "Tests")
+  
+  # Paths to main folder files
+  population_parameters_file <- file.path(subfolder, "populationParameters.txt")
+  predictions_file <- file.path(subfolder, "predictions.txt")
+  
+  # Paths to files in subfolders
+  log_likelihood_file <- file.path(log_likelihood_folder, "logLikelihood.txt")
+  correlation_file <- file.path(tests_folder, "correlationIndividualParametersCovariates.txt")
+  
+  # Path to the IndividualParameters folder
+  ind_param_folder <- file.path(subfolder, "IndividualParameters")
+  
+  # Initialize an empty list to store dataframes for each file
+  combined_data <- list()
+  
+  # Define the separator used in your .txt files (e.g., "\t" for tab-separated, "," for CSV)
+  separator <- ","  # Adjust this based on the actual file structure
+  
+  # Check if the folders and files exist and import them
+  if (dir.exists(ind_param_folder)) {
+    param_file <- file.path(ind_param_folder, "estimatedIndividualParameters.txt")
+    random_effects_file <- file.path(ind_param_folder, "estimatedRandomEffects.txt")
+    shrinkage_file <- file.path(ind_param_folder, "shrinkage.txt")
+    
+    if (file.exists(param_file)) {
+      param_data <- read.table(param_file, header = TRUE, sep = separator)
+      combined_data[["parameters"]] <- param_data
+    }
+    if (file.exists(random_effects_file)) {
+      random_effects_data <- read.table(random_effects_file, header = TRUE, sep = separator)
+      combined_data[["random_effects"]] <- random_effects_data
+    }
+    if (file.exists(shrinkage_file)) {
+      shrinkage_data <- read.table(shrinkage_file, header = TRUE, sep = separator)
+      combined_data[["shrinkage"]] <- shrinkage_data
+    }
+    if (file.exists(log_likelihood_file)) {
+      log_likelihood_data <- read.table(log_likelihood_file, header = TRUE, sep = separator)
+      combined_data[["log_likelihood"]] <- log_likelihood_data
+    }
+    if (file.exists(correlation_file)) {
+      correlation_data <- read.table(correlation_file, header = TRUE, sep = separator)
+      combined_data[["correlation"]] <- correlation_data
+    }
+    if (file.exists(population_parameters_file)) {
+      population_parameters_data <- read.table(population_parameters_file, header = TRUE, sep = separator)
+      combined_data[["population_parameters"]] <- population_parameters_data
+    }
+    if (file.exists(predictions_file)) {
+      predictions_data <- read.table(predictions_file, header = TRUE, sep = separator)
+      combined_data[["predictions"]] <- predictions_data
+    }
+    
+    return(combined_data)  # Return the list of dataframes for the subfolder
+  } else {
+    message("Folder not found: ", ind_param_folder)
+    return(NULL)
+  }
+}
+
+# Apply the function to each subfolder and store results in a list
+all_data <- lapply(subfolders, import_monolix_data)
+
+# Name the list elements with the subfolder names
+names(all_data) <- basename(subfolders)
+
+# Example: Access data from a specific subfolder (e.g., amelia_1)
+all_data$amelia_1$parameters
+
+
+
+
+
+
+# Create an empty list to store the merged shrinkage data
+shrinkage_combined <- list()
+
+# Define the percentages corresponding to the suffixes
+missing_data_percentages <- c("_1" = "5%", "_2" = "20%", "_3" = "50%", "_4" = "75%")
+
+# Loop through each element in the all_data list
+for (folder_name in names(all_data)) {
+  # Extract the shrinkage dataframe
+  shrinkage_df <- all_data[[folder_name]]$shrinkage
+  
+  # Add a column for the folder name (e.g., amelia_1)
+  shrinkage_df$File <- folder_name
+  
+  # Extract the name before the underscore
+  base_name <- sub("_[0-9]+", "", folder_name)
+  shrinkage_df$Base_Name <- base_name
+  
+  # Extract the missing data percentage from the folder name
+  missing_suffix <- sub(".*(_[0-9]+)", "\\1", folder_name)
+  shrinkage_df$Missing_Percentage <- missing_data_percentages[missing_suffix]
+  
+  # Append the dataframe to the list
+  shrinkage_combined[[folder_name]] <- shrinkage_df
+}
+
+# Combine all shrinkage dataframes into one dataframe using rbind
+final_shrinkage_df <- do.call(rbind, shrinkage_combined)
+
+# View the combined dataframe
+head(final_shrinkage_df)
+
+
+# Use pivot_wider to spread the 'parameters' values into separate columns
+final_shrinkage_wide <- final_shrinkage_df %>%
+  tidyr::pivot_wider(
+    names_from = parameters,         # Use the 'parameters' column to create new column names
+    values_from = c(shrinkage_mode, shrinkage_mean, shrinkage_condDist) # Values to spread into the new columns
+  )
+
+# View the transformed wide dataframe
+head(final_shrinkage_wide)
+
+
+final_shrinkage_wide$Missing_Percentage[is.na(final_shrinkage_wide$Missing_Percentage)] <- "0%"
+# Load required packages
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+# Replace NA in Missing_Percentage with '0%'
+final_shrinkage_wide$Missing_Percentage[is.na(final_shrinkage_wide$Missing_Percentage)] <- "0%"
+
+# Reorder the Missing_Percentage as a factor with the specified order
+final_shrinkage_wide$Missing_Percentage <- factor(
+  final_shrinkage_wide$Missing_Percentage,
+  levels = c("0%", "5%", "20%", "50%", "75%")
+)
+
+# Reshape the data to long format (split into shrinkage type and parameter)
+final_shrinkage_long <- final_shrinkage_wide %>%
+  pivot_longer(
+    cols = starts_with("shrinkage"),  # Select shrinkage-related columns
+    names_to = c("Shrinkage_Type", "Parameter"),  # Split into Shrinkage_Type and Parameter (ka, V, Cl)
+    names_pattern = "shrinkage_(.*)_(.*)",       # Extract the shrinkage type and parameter
+    values_to = "Value"                          # Column for the values
+  )
+
+
+
+# Create separate plots for each Shrinkage_Type using barplots with conditional width adjustment
+plot_list <- list()
+
+for (shrinkage_type in unique(final_shrinkage_long$Shrinkage_Type)) {
+  
+  # Filter data for the current Shrinkage_Type
+  plot_data <- final_shrinkage_long %>% filter(Shrinkage_Type == shrinkage_type)
+  
+  # Create the plot using barplots with conditional width
+  p <- ggplot(plot_data, aes(x = Missing_Percentage, y = Value, fill = Base_Name)) +
+    geom_col(position = position_dodge(width = 0.75), 
+             color = "black", 
+             aes(width = ifelse(Missing_Percentage == "0%", 0.14, 0.7))) +  # Adjust width for 0% bars
+    facet_wrap(~ Parameter, scales = "free") +  # Facet by ka, V, Cl
+    labs(title = paste("Shrinkage", shrinkage_type, "by Missing Percentage"),
+         x = "Missing Percentage",
+         y = "Shrinkage Value") +
+    scale_fill_jco() +  # Apply jco color palette
+    my_theme  # Apply your custom theme
+  
+  # Store the plot in the list
+  plot_list[[shrinkage_type]] <- p
+}
+
+# Arrange the 3 plots (mode, mean, condDist) in a single figure using ggarrange
+combined_plot <- ggarrange(
+  plot_list[["mode"]], plot_list[["mean"]], plot_list[["condDist"]],
+  ncol = 1, nrow = 3,  # Arrange in one column and three rows
+  labels = c("A", "B", "C"),  # Add labels to the plots
+  common.legend = TRUE,       # Share a common legend across all plots
+  legend = "right"            # Position the legend on the right
+)
+
+# Save the plot as a PNG file with specified dimensions and resolution
+png("Shrinkage_custom_adjusted.png", width = 16, height = 9, units = 'in', res = 900)
+print(combined_plot)
+dev.off()
+
+
+
+
+# Load required packages
+library(ggpubr)
+library(ggsci)  # For scale_color_jco and scale_fill_jco
+library(tidyr)
+library(dplyr)
+
+# Define which criteria we're interested in (OFV and BICc)
+log_likelihood_criteria <- c("OFV", "BICc")
+
+# Prepare data for plotting
+log_likelihood_data <- list()
+
+# Extract the log likelihood data (OFV and BICc) from each subfolder
+for (subfolder in names(all_data)) {
+  if ("log_likelihood" %in% names(all_data[[subfolder]])) {
+    log_likelihood_df <- all_data[[subfolder]]$log_likelihood
+    
+    # Ensure that the log_likelihood data has the required criteria
+    if ("OFV" %in% log_likelihood_df$criteria && "BICc" %in% log_likelihood_df$criteria) {
+      # Extract Missing_Percentage from folder names
+      missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
+                                   ifelse(grepl("_1$", subfolder), "5%",
+                                          ifelse(grepl("_2$", subfolder), "20%",
+                                                 ifelse(grepl("_3$", subfolder), "50%", "75%"))))
+      
+      log_likelihood_values <- data.frame(
+        File = subfolder,
+        Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
+        Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
+        OFV = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "OFV"],
+        BICc = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "BICc"]
+      )
+      
+      log_likelihood_data[[subfolder]] <- log_likelihood_values
+    }
+  }
+}
+
+# Combine the data into one dataframe
+log_likelihood_combined <- do.call(rbind, log_likelihood_data)
+
+# Reorder the Missing_Percentage to start with 0%
+log_likelihood_combined$Missing_Percentage <- factor(
+  log_likelihood_combined$Missing_Percentage, 
+  levels = c("0%", "5%", "20%", "50%", "75%")
+)
+
+# Reshape the data to long format for plotting
+log_likelihood_long <- log_likelihood_combined %>%
+  pivot_longer(cols = c(OFV, BICc), names_to = "Criteria", values_to = "Value") %>%
+  filter(!is.na(Value))  # Remove rows with missing values
+
+# Set color levels for Base_Name with final_data appearing last
+base_name_levels <- c("amelia", "MF", "mice", "midas", "xgb", "final_data")
+log_likelihood_long$Base_Name <- factor(log_likelihood_long$Base_Name, levels = base_name_levels)
+
+# Extract the final_data values for each Criteria to add as horizontal lines
+final_data_values <- log_likelihood_long %>%
+  filter(Base_Name == "final_data") %>%
+  select(Criteria, Value)
+
+
+
+
+# Load required packages
+library(ggsci)  # For jco color palette
+
+# Get the jco color palette
+jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
+
+# Define the custom color mapping for each Base_Name in the correct order
+custom_colors <- c("amelia" = jco_colors[1],
+                   "MF" = jco_colors[2],
+                   "mice" = jco_colors[3],
+                   "midas" = jco_colors[4],
+                   "xgb" = jco_colors[5],
+                   "final_data" = jco_colors[6])  # Make sure final_data is the last
+
+# Reorder the Base_Name levels to ensure final_data is last in the order
+log_likelihood_long$Base_Name <- factor(
+  log_likelihood_long$Base_Name, 
+  levels = c("amelia", "MF", "mice", "midas", "xgb", "final_data")  # Ensure final_data is last
+)
+
+# Create separate plots for OFV and BICc with zoomed Y-axis (1450 to 1750)
+plot_list <- list()
+
+for (criteria in log_likelihood_criteria) {
+  
+  # Filter data for the current criteria
+  plot_data <- log_likelihood_long %>% filter(Criteria == criteria)
+  
+  # Separate the data for Missing_Percentage = 0% and the rest
+  plot_data_0 <- plot_data %>% filter(Missing_Percentage == "0%")
+  plot_data_rest <- plot_data %>% filter(Missing_Percentage != "0%")
+  
+  # Get the final_data value for this criterion
+  final_value <- final_data_values %>% filter(Criteria == criteria) %>% pull(Value)
+  
+  # Create the plot using barplots with zoomed Y-axis (coord_cartesian)
+  p <- ggplot() +
+    geom_col(data = plot_data_0, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
+             position = position_dodge(width = 0.75), color = "black", width = 0.14) +  # Narrow bars for 0%
+    geom_col(data = plot_data_rest, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
+             position = position_dodge(width = 0.75), color = "black", width = 0.7) +  # Regular bars for the rest
+    geom_hline(yintercept = final_value, linetype = "dashed", color = "black", size = 1) +  # Add black horizontal line
+    coord_cartesian(ylim = c(1450, 1750)) +  # Zoom in on Y-axis from 1450 to 1750
+    labs(title = paste(criteria, "by Missing Percentage"),
+         x = "Missing Percentage",
+         y = criteria) +
+    scale_fill_manual(values = custom_colors, breaks = c("amelia", "MF", "mice", "midas", "xgb", "final_data")) +  # Set legend order manually
+    my_theme +  # Apply your custom theme
+    guides(fill = guide_legend(title = NULL))  # Remove the legend title
+
+  # Store the plot in the list
+  plot_list[[criteria]] <- p
+}
+
+# Arrange the two plots (OFV and BICc) in a single figure using ggarrange
+combined_log_likelihood_plot <- ggarrange(
+  plot_list[["OFV"]], plot_list[["BICc"]],
+  ncol = 1, nrow = 2,  # Arrange in one column and two rows
+  labels = c("A", "B"),  # Add labels to the plots
+  common.legend = TRUE,       # Share a common legend across all plots
+  legend = "right"            # Position the legend on the right
+)
+
+# Save the plot as a PNG file with specified dimensions and resolution
+png("LogLikelihood_OFV_BICc_corrected_legend_final.png", width = 16, height = 9, units = 'in', res = 900)
+print(combined_log_likelihood_plot)
+dev.off()
+
+
+
