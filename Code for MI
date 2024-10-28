@@ -13,6 +13,118 @@ library(ggpubr)
 library(Amelia)
 library(xgboost)
 library(caret)
+library(PFIM)
+library(magick)
+library(VIM)
+
+
+modelEquations = list(
+
+  outcomes = list( "RespPK"),
+
+  equations = list(  "RespPK" = "dose_RespPK/V * ka/(ka - Cl/V) * (exp(-Cl/V * t) - exp(-ka * t))"))
+
+# model parameters
+modelParameters = list(
+  ModelParameter( name = "V",    distribution = LogNormal( mu = 10, omega = sqrt(0.09)) ),
+  ModelParameter( name = "Cl",   distribution = LogNormal( mu = 1, omega = sqrt(0.09 )) ),
+  ModelParameter( name = "ka",   distribution = LogNormal( mu = 1, omega = sqrt(0.09)) ))
+
+
+# error Model
+errorModelRespPK = Combined1( outcome = "RespPK", sigmaInter = 0.1, sigmaSlope = 0.15 )
+modelError = list( errorModelRespPK )
+
+## sampling times
+samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25,0.5,0.75,1,2,4,8,32,32.25,32.5,32.75,33,34,36,40))
+
+# arm
+administrationRespPK = Administration( outcome = "RespPK", tau=8, dose = c( 100 ))
+
+arm1 = Arm( name = "BrasTest1",
+            size = 100,
+            administrations = list( administrationRespPK ),
+            samplingTimes   = list( samplingTimesRespPK  ))
+
+
+
+design1 = Design( name = "design1", arms = list( arm1 ))
+
+
+
+evaluationPop = Evaluation( name = "",
+                            modelEquations = modelEquations,
+                            modelParameters = modelParameters,
+                            modelError = modelError,
+                            outcomes = list( "RespPK"),
+                            designs = list( design1 ),
+                            fim = "population",
+                            odeSolverParameters = list( atol = 1e-8, rtol = 1e-8 ) )
+
+evaluationPop = run( evaluationPop )
+
+
+outputPath = "D:/MOBILITE"
+outputFile = "EvaluationPopFIM.html"
+plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL") )
+
+Report( evaluationPop, outputPath, outputFile, plotOptions )
+
+
+
+
+# constraints
+administrationConstraintsRespPK = AdministrationConstraints( outcome = "RespPK", doses = c( 100) )
+		
+samplingConstraintsRespPK  = SamplingTimeConstraints( outcome = "RespPK",
+                                                      initialSamplings = c(0.25,0.5,0.75,1,2,4,8,32,32.25,32.5,32.75,33,34,36,40),
+                                                      numberOfsamplingsOptimisable = 5 )
+
+
+arm1 = Arm( name = "BrasTest1",
+            size = 100,
+            administrations = list( administrationRespPK ),
+            samplingTimes   = list( samplingTimesRespPK  ),
+            administrationsConstraints = list( administrationConstraintsRespPK ),
+            samplingTimesConstraints = list( samplingConstraintsRespPK ) )
+
+
+
+design1 = Design( name = "design1", arms = list( arm1 ))
+
+
+# --------------------------------------
+# Optimization
+
+# optimize the Fisher Information Matrix for the PopulationFIM
+optimizationPopFIM = Optimization( name = "PK_analytic_populationFIM",
+                             modelEquations = modelEquations,
+                             modelParameters = modelParameters,
+                             modelError = modelError,
+                             optimizer = "FedorovWynnAlgorithm",
+                             optimizerParameters = list( elementaryProtocols = list(c(0.25,0.5,0.75,1,2,4,8,32,32.25,32.5,32.75,33,34,36,40)),
+                             numberOfSubjects = c(100),
+                             proportionsOfSubjects = c(1),
+                             showProcess = T),
+                             designs = list( design1 ),
+                             fim = "population",
+                             outcomes = list( "RespPK" ) )
+
+optimizationPopFIM = run( optimizationPopFIM )
+
+
+# plots
+plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL"))
+outputPath = "D:/MOBILITE/1er papier - Simulation Covariables/"
+outputFile = "EvaluationPopFIM.html"
+outputFile = "Optimization_PopFIM_100Sub_5Samp.html"
+Report( optimizationPopFIM, outputPath, outputFile, plotOptions )
+
+
+
+
+
+
 
 my_theme <- theme_minimal(base_size = 16) +
   theme(
@@ -22,6 +134,12 @@ my_theme <- theme_minimal(base_size = 16) +
     legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
     legend.text = element_text(size = 16, color = "black")      # Legend text size and color
   )
+
+
+
+
+
+
 
 
 setwd("D:/MOBILITE/1er papier - Simulation Covariables/Figures")
@@ -72,6 +190,9 @@ dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
 $CAPTURE DV CL VC KA'
 
 mod <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
+
+
+
 
 
 
@@ -131,7 +252,6 @@ cor(sim_data)
 
 
 
-
 ff <- function(model_switch, xt, p, poped.db){
   times_xt <- drop(xt)  
   dose_times <- seq(from=0,to=max(times_xt),by=p[["TAU"]])
@@ -191,117 +311,13 @@ poped.cov_mrg_poped <- create.poped.database(
   fError_fun=feps,
   bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
   d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
-  notfixed_bpop=c(1,1,1,1,1,1,1),
-  sigma=c(prop=0.15^2,add=0.01^2),
-  notfixed_sigma=c(0,0),
+  notfixed_bpop=c(1,1,1,0,0,0,0),
+  sigma=c(prop=0.15^2,add=0.1^2),
+  notfixed_sigma=c(1,1),
   m=100,
   groupsize=1,
   xt=c(0.25,0.5,4,36,40),
-  discrete_xt=c(0.25,0.5,1:40),
-  minxt=c(0),
-  maxxt=c(40),
-  a = cbind(DOSE=rep(100,100), TAU=rep(8,100), WT=c(rnorm(100, mean = 70, sd = 15)), CrCl=c(rnorm(100, mean = 90, sd = 15)),PPI=rbinom(n = 100, size = 1, prob = 0.5), UM=rbinom(n = 100, size = 1, prob = 0.5))
-)
-
-plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
-ev<-evaluate_design(poped.cov_mrg_poped)
-shrinkage(poped.cov_mrg_poped)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-ff <- function(model_switch, xt, p, poped.db){
-  times_xt <- drop(xt)  
-  dose_times <- seq(from=0,to=max(times_xt),by=p[["TAU"]])
-  time <- sort(unique(c(times_xt,dose_times)))
-  is.dose <- time %in% dose_times
-  
-  data <- data.frame(
-    ID = 1,
-    time = time,
-    amt = ifelse(is.dose,p[["DOSE"]], 0), 
-    cmt = ifelse(is.dose, 1, 0)
-  )
-  
-  data[["evid"]] <- data[["cmt"]]
-  
-  mod <- param(mod, as.list(p))
-  
-  out <- mrgsim_q(mod,data)
-  
-  y <- out$DV[match(times_xt,out$time)]
-  
-  return(list(y=matrix(y,ncol=1),poped.db=poped.db))
-}
-  
-
-
-sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
-  parameters=c(TVCL=bpop[1]*exp(b[1])*exp(bpop[7]),
-               TVVC=bpop[2]*exp(b[2]),
-               TVKA=bpop[3]*exp(b[3]),
-               WT_VC=bpop[4],
-               CrCl_CL=bpop[5],
-               PPI_KA=bpop[6],
-               DOSE=a[1],
-               TAU =a[2],
-               WT  =a[3],
-               CrCl =a[4],
-               PPI  =a[5])
-  return(parameters) 
-}
-
-
-feps <- function(model_switch,xt,parameters,epsi,poped.db){
-  returnArgs <- do.call(poped.db$model$ff_pointer,list(model_switch,xt,parameters,poped.db)) 
-  y <- returnArgs[[1]]
-  poped.db <- returnArgs[[2]]
-  
-  y = y*(1+epsi[,1])+epsi[,2]
-  
-  return(list( y= y,poped.db =poped.db )) 
-}
-
-
-poped.cov_mrg_poped <- create.poped.database(
-  ff_fun=ff,
-  fg_fun=sfg.mrgsolve.cov,
-  fError_fun=feps,
-  bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
-  d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
-  notfixed_bpop=c(1,1,1,1,1,1,1),
-  sigma=c(prop=0.15^2,add=0.01^2),
-  notfixed_sigma=c(0,0),
-  m=100,
-  groupsize=1,
-  xt=c(0.25,0.5,4,36,40),
-  discrete_xt=c(0.25,0.5,1:40),
+  discrete_xt=c(0.25,0.5,4,36,40),
   minxt=c(0),
   maxxt=c(40),
   a = cbind(DOSE=rep(100,100), TAU=rep(8,100), WT=sim_data$WT, CrCl=sim_data$CrCl,PPI=sim_data$PPI,UM=sim_data$UM)
@@ -315,14 +331,9 @@ shrinkage(poped.cov_mrg_poped)
 
 
 
-
-
-
-
-
-
 # Define the PK model
 codeb <- '
+
 $PROB
 
 $PARAM @annotated
@@ -350,7 +361,7 @@ $OMEGA @block
 
 $SIGMA 
 0.0225 // err prop
-0.0001 //  err additive
+0.01 //  err additive
 
 
 $CMT @annotated
@@ -368,7 +379,6 @@ double CL = TVCL * pow((CrCl/90),CrCl_CL) * pow((UM_CL),UM) *exp(ETA(1))    ;
 double VC = TVVC * pow((WT/70),WT_VC)*exp(ETA(2))  ;
 double KA = TVKA * pow((PPI_KA),PPI)*exp(ETA(3))   ;
 double K10 = CL/VC ;
-
 
 
 $ODE
@@ -459,9 +469,6 @@ final_data_mice$UM<-as.factor(as.character(final_data_mice$UM))
 
 
 
-
-
-
 # Define the columns you want to use for imputation
 selected_columns <- c(1:9, 15)  # Columns: ID, time, 3:9, and DV (column 14)
 
@@ -495,6 +502,57 @@ for (perc in percentages) {
   data_with_missing <- introduce_missing_data(data_with_missing, "UM", perc)
   missing_data_list[[paste0("missing_", perc, "perc")]] <- data_with_missing
 }
+
+
+
+# Define your list of missing data percentages
+missing_percentages <- c("5%", "20%", "50%", "75%")
+
+# Loop over each dataframe in missing_data_list and save each plot as PNG
+for (i in 1:length(missing_data_list)) {
+  # Subset the data to keep only the variables of interest
+  selected_data <- missing_data_list[[i]][, c("UM", "CrCl", "PPI", "WT")]
+  
+  # Create the PNG filename, removing special characters like %
+  png_filename <- paste0("Missing_Data_", gsub("%", "", missing_percentages[i]), ".png")
+  
+  # Save the plot as PNG with a larger width to provide more space
+  png(png_filename, width = 1600, height = 700)
+  
+  # Increase the top margin to make space for the title
+  par(mar = c(5, 5, 10, 5))  # Increase top margin to 10 for title space
+  
+  # Generate the aggr plot
+  aggr(selected_data, numbers = TRUE, sortVars = TRUE, 
+       prop = TRUE, cex.axis = 2, cex.lab = 2, cex.numbers = 2, gap = 5, 
+       labels = c("UM", "CrCl", "PPI", "WT"), combined = FALSE, 
+       col = c("skyblue", "red"), border = "black")
+  
+  # Add the title using mtext(), positioning it above the plot
+  mtext(paste("Missing Data -", missing_percentages[i]), side = 3, line = 8.5, cex = 2, font = 2)
+  
+  # Close the PNG device
+  dev.off()
+}
+
+
+# Load the 4 PNG images in the correct order
+img1 <- image_read("Missing_Data_5.png")
+img2 <- image_read("Missing_Data_20.png")
+img3 <- image_read("Missing_Data_50.png")
+img4 <- image_read("Missing_Data_75.png")
+
+# Combine the 4 images into a 2x2 layout in the correct order
+combined_img <- image_append(c(
+  image_append(c(img1, img2), stack = TRUE), 
+  image_append(c(img3, img4), stack = TRUE)
+))
+
+# Display the combined image
+print(combined_img)
+
+# Optionally, save the combined image as a PNG
+image_write(combined_img, path = "Combined_Missing_Data_Final.png")
 
 
 
@@ -638,12 +696,6 @@ mice_combined_data <- cbind(
 
 # View the combined dataframe
 mice_combined_data
-
-
-
-
-
-
 
 
 
@@ -801,8 +853,8 @@ for(i in seq_along(missing_data_list)) {
   # Train the rMIDAS model
   MIDAS_train <- rMIDAS::train(MIDAS_conv,
                        training_epochs = 50,           # Number of training epochs
-                       layer_structure = c(256, 128,64,32,16),  # Hidden layers
-                       input_drop = 0.8,              # Dropout to prevent overfitting
+                       layer_structure = c(128,64,32),  # Hidden layers
+                       input_drop = 0.5,              # Dropout to prevent overfitting
                        seed = 89)                      # Set a seed for reproducibility
   
   # Perform imputation with the trained model (m=1 for single imputation)
@@ -1256,7 +1308,7 @@ for (i in seq_along(missing_data_list)) {
     data$WT[idx] <- mean_WT
     data$CrCl[idx] <- mean_CrCl
     data$PPI[idx] <- most_frequent_PPI
-    data$UM[idx] <- most_frequent_PPI
+    data$UM[idx] <- most_frequent_UM
   }
   
   # Store the adjusted data back into the list
@@ -1359,27 +1411,289 @@ XGB_combined_data <- cbind(
 # View the combined dataframe
 XGB_combined_data
 
+# Load necessary libraries
+library(ggplot2)
+library(ggcorrplot)
+library(ggpubr)
+library(dplyr)
+
+# Define the columns of interest
+columns_of_interest <- c("Height", "WT", "Alb", "CrCl", "Age", "PPI", "UM")
+
+# Define the percentages of missing data
+missing_percentages <- c("5% NA", "20% NA", "50% NA", "75% NA")
+
+# Combine all datasets into a list
+all_datasets <- list(
+  sim_data,  # Original simulated data
+  
+  # MICE imputed datasets
+  mice_imputed_data_list[[1]],
+  mice_imputed_data_list[[2]],
+  mice_imputed_data_list[[3]],
+  mice_imputed_data_list[[4]],
+  
+  # AMELIA imputed datasets
+  amelia_imputed_data_list[[1]],
+  amelia_imputed_data_list[[2]],
+  amelia_imputed_data_list[[3]],
+  amelia_imputed_data_list[[4]],
+  
+  # MF imputed datasets
+  MF_imputed_data_list[[1]],
+  MF_imputed_data_list[[2]],
+  MF_imputed_data_list[[3]],
+  MF_imputed_data_list[[4]],
+  
+  # XGB imputed datasets
+  XGB_imputed_data_list[[1]],
+  XGB_imputed_data_list[[2]],
+  XGB_imputed_data_list[[3]],
+  XGB_imputed_data_list[[4]],
+  
+  # MIDAS imputed datasets
+  MIDAS_imputed_data_list[[1]],
+  MIDAS_imputed_data_list[[2]],
+  MIDAS_imputed_data_list[[3]],
+  MIDAS_imputed_data_list[[4]]
+)
+
+# Assign names to datasets
+dataset_names <- c(
+  "Final Data",
+  
+  # MICE datasets with missing percentages
+  paste0("MICE ", missing_percentages),
+  
+  # AMELIA datasets
+  paste0("Amelia ", missing_percentages),
+  
+  # MF datasets
+  paste0("MF ", missing_percentages),
+  
+  # XGB datasets
+  paste0("XGB ", missing_percentages),
+  
+  # MIDAS datasets
+  paste0("MIDAS ", missing_percentages)
+)
+
+# Ensure that the number of datasets matches the number of names
+if (length(all_datasets) != length(dataset_names)) {
+  stop("The number of datasets and dataset names do not match.")
+}
+
+# Initialize an empty list to store plots
+plot_list <- list()
+
+# Loop over each dataset
+for (i in seq_along(all_datasets)) {
+  data <- all_datasets[[i]]
+  
+  # Check if all columns of interest are present in the dataset
+  missing_cols <- setdiff(columns_of_interest, names(data))
+  if (length(missing_cols) > 0) {
+    warning(paste("Dataset", dataset_names[i], "is missing columns:", paste(missing_cols, collapse = ", ")))
+    next
+  }
+  
+  # Select columns of interest
+  data_subset <- data[, columns_of_interest]
+  
+  # Convert all columns to numeric
+  data_subset <- data_subset %>% mutate_all(~ as.numeric(as.character(.)))
+  
+  # Remove rows with NAs
+  data_subset <- na.omit(data_subset)
+  if (nrow(data_subset) == 0) {
+    warning(paste("Dataset", dataset_names[i], "has no complete cases. Skipping."))
+    next
+  }
+  
+  # Compute correlation matrix
+  corr_matrix <- cor(data_subset, use = "complete.obs", method = "pearson")
+  
+  # Generate the correlation plot using ggcorrplot with labels
+  p <- ggcorrplot(corr_matrix,
+                  type = "upper",
+                  lab = TRUE,        # Include correlation coefficients
+                  lab_size = 3,      # Adjust label size for readability
+                  title = dataset_names[i],
+                  show.legend = FALSE,
+                  ggtheme = my_theme,
+                  colors = c("blue", "white", "red"))  # Negative correlations in blue, positive in red
+  
+  # Adjust plot theme for readability
+  p <- p + theme(
+    plot.title = element_text(size = 10, hjust = 0.5),
+    axis.text = element_text(size = 6)
+  )
+  
+  # Add the plot to the list
+  plot_list[[i]] <- p
+}
+
+# Arrange plots using ggarrange
+# Since we now have 21 datasets, we'll arrange them in 7 columns and 3 rows
+combined_plot <- ggarrange(
+  plotlist = plot_list,
+  ncol = 7, nrow = 3,
+  labels = NULL
+)
+
+# Save the combined plot to a PNG file using png() and dev.off()
+# Set the output image size and resolution
+png("Correlation plot.png", width = 24, height = 9, units = 'in', res = 900)
+
+# Draw the combined plot
+print(combined_plot)
+
+# Close the graphics device
+dev.off()
 
 
 
 
 
+# Assuming you have the correlation matrices stored or you can compute them again
+corr_matrices <- list()
+
+# Compute correlation matrices for all datasets
+for (i in seq_along(all_datasets)) {
+  data <- all_datasets[[i]]
+  data_subset <- data[, columns_of_interest]
+  
+  # Convert all columns to numeric
+  data_subset <- data_subset %>% mutate_all(~ as.numeric(as.character(.)))
+  
+  # Remove rows with NAs
+  data_subset <- na.omit(data_subset)
+  
+  # Compute correlation matrix
+  corr_matrix <- cor(data_subset, use = "complete.obs", method = "pearson")
+  
+  # Store the correlation matrix
+  corr_matrices[[i]] <- corr_matrix
+}
+
+# Assign names to the correlation matrices
+names(corr_matrices) <- dataset_names
 
 
 
 
+# Extract the original correlation matrix
+corr_original <- corr_matrices[["Final Data"]]
+
+# Initialize a data frame to store the results
+frobenius_results <- data.frame(
+  Dataset = character(),
+  Frobenius_Norm = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through the imputed datasets
+for (i in seq_along(corr_matrices)) {
+  dataset_name <- names(corr_matrices)[i]
+  
+  # Skip the original dataset
+  if (dataset_name == "Final Data") next
+  
+  corr_matrix <- corr_matrices[[i]]
+  
+  # Compute the Frobenius norm of the difference
+  diff_matrix <- corr_matrix - corr_original
+  frob_norm <- norm(diff_matrix, type = "F")
+  
+  # Store the result
+  frobenius_results <- rbind(frobenius_results, data.frame(
+    Dataset = dataset_name,
+    Frobenius_Norm = frob_norm
+  ))
+}
+
+# Display the results sorted by Frobenius Norm
+frobenius_results <- frobenius_results %>% arrange(Frobenius_Norm)
+print(frobenius_results)
 
 
+# Install the package if not already installed
+if (!require("FactoMineR")) install.packages("FactoMineR")
+library(FactoMineR)
+
+# Initialize a data frame to store the results
+rv_results <- data.frame(
+    Dataset = character(),
+    RV_Coefficient = numeric(),
+    stringsAsFactors = FALSE
+)
+
+# Loop through the imputed datasets
+for (i in seq_along(corr_matrices)) {
+    dataset_name <- names(corr_matrices)[i]
+    
+    # Skip the original dataset
+    if (dataset_name == "Final Data") next
+    
+    corr_matrix <- corr_matrices[[i]]
+    
+    # Compute the RV coefficient
+    rv_obj <- coeffRV(corr_original, corr_matrix)
+    
+    # Extract the RV coefficient value
+    rv_value <- rv_obj$rv
+    
+    # Store the result
+    rv_results <- rbind(rv_results, data.frame(
+        Dataset = dataset_name,
+        RV_Coefficient = rv_value
+    ))
+}
+
+# Display the results sorted by RV Coefficient (descending)
+rv_results <- rv_results %>% arrange(desc(RV_Coefficient))
+print(rv_results)
 
 
+# Frobenius Norm Plot
+plot_frobenius <- ggplot(frobenius_results, aes(x = reorder(Dataset, Frobenius_Norm), y = Frobenius_Norm)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  coord_flip() +
+  labs(title = "Frobenius Norm of Correlation Matrix Differences",
+       x = "Dataset",
+       y = "Frobenius Norm") +
+  my_theme
 
 
+# RV Coefficient Plot
+plot_rv <- ggplot(rv_results, aes(x = reorder(Dataset, -RV_Coefficient), y = RV_Coefficient)) +
+  geom_bar(stat = "identity", fill = "salmon") +
+  coord_flip() +
+  labs(title = "RV Coefficient between Correlation Matrices",
+       x = "Dataset",
+       y = "RV Coefficient") +
+  my_theme
 
 
+combined_plot <- ggarrange(
+  plot_frobenius,
+  plot_rv,
+  ncol = 1, nrow = 2,
+  labels = c("A", "B")
+)
 
 
+png(filename = "Combined_Metrics_Corr_Plot.png",
+    width = 10,    # Adjust width as needed
+    height = 12,   # Adjust height as needed
+    units = "in",
+    res = 300)
 
+# Draw the combined plot
+print(combined_plot)
 
+# Close the graphics device
+dev.off()
 
 
 
@@ -1539,6 +1853,8 @@ dev.off()
 
 
 
+
+
 merged_imputed_data_list <- c(
   mice_imputed_data_list,
   MF_imputed_data_list,
@@ -1565,7 +1881,6 @@ names(merged_imputed_data_list) <- c(
 
 # Check the first few dataset names in the merged list
 head(names(merged_imputed_data_list))
-
 
 
 
@@ -1686,6 +2001,19 @@ for (i in seq_along(merged_imputed_data_list)) {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Define the base directory by removing the "Figures" part
 base_directory <- "D:/MOBILITE/1er papier - Simulation Covariables"
 
@@ -1712,124 +2040,6 @@ for (i in seq_along(merged_imputed_data_list)) {
 
 # Print a message indicating completion
 print("Merged imputed dataframes have been successfully exported into 'imputed_datasets_merged'.")
-
-
-
-
-
-
-# Exclude final_data
-filtered_combined_data <- combined_subset_data %>%
-  filter(Imputation_Method != "final")  # Exclude final data
-
-# Reorder Missing_Percentage and Imputation_Method as factors
-filtered_combined_data$Missing_Percentage <- factor(filtered_combined_data$Missing_Percentage,
-                                                  levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
-
-filtered_combined_data$Imputation_Method <- factor(filtered_combined_data$Imputation_Method,
-                                                 levels = c("amelia", "MF", "mice", "MIDAS", "XGB"))
-
-# Corrected function to match density with the histogram by dividing by the binwidth and add custom fill, spacing, and proper legend
-plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
-  binwidth_value <- ifelse(variable == "WT", 2, 2)  # Define binwidth
-  
-  ggplot(data, aes_string(x = variable)) +
-    # Histogram with appropriate binwidth
-    geom_histogram(aes(y = ..count.., fill = Imputation_Method),  
-                   binwidth = binwidth_value,  # Adjust bin width
-                   color = "black", alpha = 0.7, show.legend = TRUE) +
-    
-    # Gaussian curve for each subset
-    stat_function(fun = function(x) {
-      data_subset <- data[data$Imputation_Method == unique(data$Imputation_Method) &
-                          data$Missing_Percentage == unique(data$Missing_Percentage), ]
-      mean_val <- mean(data_subset[[variable]], na.rm = TRUE)
-      sd_val <- sd(data_subset[[variable]], na.rm = TRUE)
-      dnorm(x, mean = mean_val, sd = sd_val) * nrow(data_subset) * binwidth_value  # Adjust for bin width
-    }, aes(linetype = "Gaussian Distribution", color = "Gaussian Distribution"), size = 1, show.legend = TRUE) +  # Map linetype and color to legend
-    
-    # Density curve properly scaled by dividing by the binwidth
-    geom_density(aes(y = ..density.. * 100 * binwidth_value, linetype = "Density Estimate", color = "Density Estimate"),  # Adjust for correct scaling
-                 size = 1, alpha = 0.5, show.legend = TRUE) +  # Density curve
-    
-    # Facet by Missing_Percentage and Imputation_Method with custom spacing
-    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
-    
-    # Add the color palette from ggsci
-    scale_fill_jco() +
-    
-    # Add manual legends for Gaussian and Density Estimate, both with solid lines and color differentiation
-    scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +  # Both solid
-    scale_color_manual(name = "Legend", values = c("Gaussian Distribution" = "blue", "Density Estimate" = "red")) +  # Blue for Gaussian, Red for Density
-    
-    labs(title = paste("Distribution of", variable_name),
-         x = variable_name,
-         y = "Count") +
-    
-    # Custom theme with spacing and legend
-    my_theme +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      axis.title = element_text(size = 16),
-      axis.text = element_text(size = 14),
-      strip.text = element_text(face = "bold"),
-      
-      # Add spacing between facets for better separation
-      panel.spacing = unit(1, "lines"),  # Adjust the spacing as needed
-      
-      # Ensure that axis labels are shown for all plots, not just the left and bottom
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      axis.text.y = element_text(),
-      
-      # Move the legend to the top right for better visibility
-      legend.position = "top",
-      
-      # Customize the legend key appearance to have white background and no border
-      legend.key = element_rect(fill = "white", color = "black"),  # White background for squares, black border
-      legend.title = element_text(face = "bold"),
-      legend.text = element_text(size = 12),
-      
-      # Add grey borders to each facet panel
-      panel.border = element_rect(color = "grey", fill = NA, size = 1),  # Grey border for facets
-      strip.background = element_rect(fill = "grey", color = "grey", size = 1)  # Grey border around facet label
-    ) +
-    
-    # Custom guides for the legend, overriding the background fill inside the legend keys
-    guides(
-      fill = guide_legend(title = "Imputation Method"),
-      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),  # Ensure correct color and white background
-      color = "none"  # Disable separate color legend
-    )
-}
-
-# Plot for WT
-WT_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_data, "WT", "Weight (WT)")
-
-# Save the plot for WT
-png("WT_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(WT_Plot_fixed)
-dev.off()
-
-# Plot for CrCl
-CrCl_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_data, "CrCl", "Creatinine Clearance (CrCl)")
-
-# Save the plot for CrCl
-png("CrCl_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(CrCl_Plot_fixed)
-dev.off()
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # Load necessary libraries
@@ -1884,80 +2094,114 @@ str(combined_subset_data)
 # write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
 
 
-# Modify the function to import data as dataframes with proper column separation
-import_monolix_data <- function(subfolder) {
-  # Paths to additional subfolders
-  log_likelihood_folder <- file.path(subfolder, "LogLikelihood")
-  tests_folder <- file.path(subfolder, "Tests")
-  
-  # Paths to main folder files
-  population_parameters_file <- file.path(subfolder, "populationParameters.txt")
-  predictions_file <- file.path(subfolder, "predictions.txt")
-  
-  # Paths to files in subfolders
-  log_likelihood_file <- file.path(log_likelihood_folder, "logLikelihood.txt")
-  correlation_file <- file.path(tests_folder, "correlationIndividualParametersCovariates.txt")
-  
-  # Path to the IndividualParameters folder
-  ind_param_folder <- file.path(subfolder, "IndividualParameters")
-  
-  # Initialize an empty list to store dataframes
-  combined_data <- list()
-  
-  # Define the separator used in your .txt files (e.g., "\t" for tab-separated, "," for CSV)
-  separator <- ","  # Adjust this based on the actual file structure
-  
-  # Check if the folders and files exist and import them
-  if (dir.exists(ind_param_folder)) {
-    param_file <- file.path(ind_param_folder, "estimatedIndividualParameters.txt")
-    random_effects_file <- file.path(ind_param_folder, "estimatedRandomEffects.txt")
-    shrinkage_file <- file.path(ind_param_folder, "shrinkage.txt")
+
+
+
+# Exclude final_data
+filtered_combined_data <- combined_subset_data %>%
+  filter(Imputation_Method != "final")  # Exclude final data
+
+# Reorder Missing_Percentage and Imputation_Method as factors
+filtered_combined_data$Missing_Percentage <- factor(filtered_combined_data$Missing_Percentage,
+                                                  levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+
+filtered_combined_data$Imputation_Method <- factor(filtered_combined_data$Imputation_Method,
+                                                 levels = c("amelia", "MF", "mice", "MIDAS", "XGB"))
+
+
+
+
+
+
+
+# Corrected function to match density with the histogram by dividing by the binwidth and add custom fill, spacing, and proper legend
+plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
+    binwidth_value <- ifelse(variable == "WT", 2, 2)  # Define binwidth
     
-    if (file.exists(param_file)) {
-      param_data <- read.table(param_file, header = TRUE, sep = separator)
-      combined_data[["parameters"]] <- param_data
-    }
-    if (file.exists(random_effects_file)) {
-      random_effects_data <- read.table(random_effects_file, header = TRUE, sep = separator)
-      combined_data[["random_effects"]] <- random_effects_data
-    }
-    if (file.exists(shrinkage_file)) {
-      shrinkage_data <- read.table(shrinkage_file, header = TRUE, sep = separator)
-      combined_data[["shrinkage"]] <- shrinkage_data
-    }
-    if (file.exists(log_likelihood_file)) {
-      log_likelihood_data <- read.table(log_likelihood_file, header = TRUE, sep = separator)
-      combined_data[["log_likelihood"]] <- log_likelihood_data
-    }
-    if (file.exists(correlation_file)) {
-      correlation_data <- read.table(correlation_file, header = TRUE, sep = separator)
-      combined_data[["correlation"]] <- correlation_data
-    }
-    if (file.exists(population_parameters_file)) {
-      population_parameters_data <- read.table(population_parameters_file, header = TRUE, sep = separator)
-      combined_data[["population_parameters"]] <- population_parameters_data
-    }
-    if (file.exists(predictions_file)) {
-      predictions_data <- read.table(predictions_file, header = TRUE, sep = separator)
-      combined_data[["predictions"]] <- predictions_data
-    }
-    
-    # Combine all dataframes into one, adding the folder name as a variable
-    final_df <- do.call(cbind, combined_data)
-    final_df$Folder <- basename(subfolder)  # Add folder name as a new column
-    
-    return(final_df)
-  } else {
-    message("Folder not found: ", ind_param_folder)
-    return(NULL)
-  }
+    ggplot(data, aes_string(x = variable)) +
+        # Histogram with appropriate binwidth
+        geom_histogram(aes(y = ..count../2.5, fill = Imputation_Method),  
+                       binwidth = binwidth_value,  
+                       color = "black", alpha = 0.7, show.legend = TRUE) +
+        
+        # Gaussian curve for each subset
+        stat_function(data = data,
+                      fun = function(x) {
+                          mean_val <- mean(data[[variable]], na.rm = TRUE)
+                          sd_val <- sd(data[[variable]], na.rm = TRUE)
+                          dnorm(x, mean = mean_val, sd = sd_val)*100
+                      }, 
+                      aes(linetype = "Gaussian Distribution", color = "Gaussian Distribution"), 
+                      size = 1, show.legend = TRUE) +
+        
+        # Density curve properly scaled by dividing by the binwidth
+        geom_density(aes(y = ..density..*100 , 
+                         linetype = "Density Estimate", color = "Density Estimate"),  
+                     size = 1, alpha = 0.5, show.legend = TRUE) +
+        
+        # Facet by Missing_Percentage and Imputation_Method with custom spacing
+        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+        
+        # Add the color palette from ggsci
+        scale_fill_jco() +
+        
+        # Add manual legends for Gaussian and Density Estimate, both with solid lines and color differentiation
+        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +  
+        scale_color_manual(name = "Legend", values = c("Gaussian Distribution" = "blue", "Density Estimate" = "red")) + 
+        
+        labs(title = paste("Distribution of", variable_name),
+             x = variable_name,
+             y = "Count") +
+        
+        # Custom theme with spacing and legend
+        my_theme +
+        theme(
+            plot.title = element_text(hjust = 0.5, face = "bold"),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            strip.text = element_text(face = "bold"),
+            
+            # Add spacing between facets for better separation
+            panel.spacing = unit(1, "lines"),  
+            
+            # Adjust legend
+            legend.position = "top",
+            legend.key = element_rect(fill = "white", color = "black"), 
+            legend.title = element_text(face = "bold"),
+            legend.text = element_text(size = 12),
+            
+            # Add grey borders to each facet panel
+            panel.border = element_rect(color = "grey", fill = NA, size = 1),  
+            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+        ) +
+        
+        # Custom guides for the legend
+        guides(
+            fill = guide_legend(title = "Imputation Method"),
+            linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),  
+            color = "none"
+        )
 }
 
-# Apply the function to each subfolder and combine results into a single dataframe
-all_data <- do.call(rbind, lapply(subfolders, import_monolix_data))
+# Plot for WT
+WT_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "WT", "Weight (WT)")
 
-# Example: View the combined dataframe
-head(all_data)
+# Save the plot for WT
+png("WT_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
+print(WT_Plot_fixed)
+dev.off()
+
+
+
+# Plot for CrCl
+CrCl_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "CrCl", "Creatinine Clearance (CrCl)")
+
+
+# Save the plot for CrCl
+png("CrCl_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
+print(CrCl_Plot_fixed)
+dev.off()
+
 
 
 # Define the base directory where the Monolix folder is located
@@ -2038,9 +2282,6 @@ all_data <- lapply(subfolders, import_monolix_data)
 
 # Name the list elements with the subfolder names
 names(all_data) <- basename(subfolders)
-
-# Example: Access data from a specific subfolder (e.g., amelia_1)
-all_data$amelia_1$parameters
 
 
 
@@ -2214,17 +2455,6 @@ log_likelihood_long <- log_likelihood_combined %>%
 base_name_levels <- c("amelia", "MF", "mice", "midas", "xgb", "final_data")
 log_likelihood_long$Base_Name <- factor(log_likelihood_long$Base_Name, levels = base_name_levels)
 
-# Extract the final_data values for each Criteria to add as horizontal lines
-final_data_values <- log_likelihood_long %>%
-  filter(Base_Name == "final_data") %>%
-  select(Criteria, Value)
-
-
-
-
-# Load required packages
-library(ggsci)  # For jco color palette
-
 # Get the jco color palette
 jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
 
@@ -2241,6 +2471,11 @@ log_likelihood_long$Base_Name <- factor(
   log_likelihood_long$Base_Name, 
   levels = c("amelia", "MF", "mice", "midas", "xgb", "final_data")  # Ensure final_data is last
 )
+
+# **Define final_data_values before the plotting loop**
+final_data_values <- log_likelihood_long %>%
+  filter(Base_Name == "final_data", Missing_Percentage == "0%") %>%
+  select(Criteria, Value)
 
 # Create separate plots for OFV and BICc with zoomed Y-axis (1450 to 1750)
 plot_list <- list()
@@ -2291,4 +2526,180 @@ print(combined_log_likelihood_plot)
 dev.off()
 
 
+
+
+
+# Prepare list to store p-values from correlation files
+correlation_data_list <- list()
+
+# Loop through each folder in your data
+for (subfolder in names(all_data)) {
+  if ("correlation" %in% names(all_data[[subfolder]])) {
+    correlation_df <- all_data[[subfolder]]$correlation
+    
+    # Extract Missing_Percentage from folder names
+    missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
+                                 ifelse(grepl("_1$", subfolder), "5%",
+                                        ifelse(grepl("_2$", subfolder), "20%",
+                                               ifelse(grepl("_3$", subfolder), "50%", "75%"))))
+    
+    # Create a new dataframe with relevant columns
+    correlation_values <- data.frame(
+      Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
+      Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
+      covariate = correlation_df$covariate,        # Covariate column (instead of parameter)
+      p_value = correlation_df$p.value             # P-value column
+    )
+    
+    # Append to list
+    correlation_data_list[[subfolder]] <- correlation_values
+  }
+}
+
+# Combine all data into one dataframe
+correlation_combined <- do.call(rbind, correlation_data_list)
+
+# Reorder the Missing_Percentage to start with 0%
+correlation_combined$Missing_Percentage <- factor(
+  correlation_combined$Missing_Percentage, 
+  levels = c("0%", "5%", "20%", "50%", "75%")
+)
+
+
+# Convert p_value to numeric and then filter
+correlation_combined <- correlation_combined %>%
+  mutate(p_value = as.numeric(p_value)) %>%  # Convert p_value column to numeric
+  filter(!is.na(p_value) & p_value > 0.05)  # Remove rows with NA or p-values < 0.05
+
+# View the resulting dataframe
+head(correlation_combined)
+
+
+
+# Reorder columns as: Covariate, Missing Percentage, Base Name, and P-value
+correlation_combined <- correlation_combined %>%
+  dplyr::select(covariate, Missing_Percentage, Base_Name, p_value) %>%
+  dplyr::arrange(covariate, Missing_Percentage, Base_Name)
+
+# View the resulting dataframe
+correlation_combined
+
+
+
+# Load required packages
+library(flextable)
+library(officer)
+
+# Create the flextable from the reordered dataframe
+flextable_table <- flextable(correlation_combined)
+
+# Merge vertically where values are the same for covariate, Missing_Percentage, and Base_Name
+flextable_table <- flextable_table %>%
+  merge_v(j = "covariate") %>%  # Merge covariate column when values are the same
+  merge_v(j = "Missing_Percentage") %>%  # Merge Missing_Percentage column when values are the same
+  merge_v(j = "Base_Name") %>%  # Merge Base_Name column when values are the same
+  theme_box() %>%  # Apply a simple box theme to the table
+  set_header_labels(
+    covariate = "Covariate",
+    Missing_Percentage = "Missing Percentage",
+    Base_Name = "Imputation Method",
+    p_value = "P-Value"
+  ) %>% 
+  fontsize(size = 10, part = "all") %>%  # Set font size to 10 for all parts of the table
+  bold(part = "header") %>%  # Make the headers bold
+  align(align = "center", part = "all") %>%  # Center-align all text
+  width(j = c("covariate"), width = 2.5) %>%  # Set custom column widths for better readability
+  width(j = c("Missing_Percentage", "Base_Name", "p_value"), width = 1.5) %>%  # Adjust width of other columns
+  border_inner_h(border = fp_border(color = "gray", width = 1)) %>%  # Set inner horizontal borders
+  border_outer(border = fp_border(color = "black", width = 1.5)) %>%  # Set outer borders
+  padding(padding = 5, part = "all") %>%  # Add some padding for better readability
+  add_footer_lines(values = "This table summarizes the non-significant p-values for each covariate.") %>%  # Add a custom footer
+  font(part = "all", fontname = "Times New Roman")  # Set font to Times New Roman for publication
+
+# Display the flextable
+flextable_table
+
+# Export the flextable as a Word document with improved formatting
+doc <- officer::read_docx()
+doc <- flextable::body_add_flextable(doc, flextable_table)
+print(doc, target = "Improved_Merged_Correlation_Table.docx")
+
+
+
+
+
+
+# Load necessary libraries
+library(RsSimulx) # Ensure you have RsSimulx installed for Monolix
+library(ggplot2)
+library(ggpubr)
+library(lixoftConnectors)
+initializeLixoftConnectors(software = "monolix")
+initializeLixoftConnectors(path = "C:/Program Files/Lixoft/MonolixSuite2024R1")
+
+# Define the directory where your mlxtran files are stored
+mlxtran_directory <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
+
+
+
+# Helper function to extract the project name and percentage of NA
+extract_project_info <- function(project_name) {
+  name_parts <- unlist(strsplit(project_name, "_"))
+  project_name <- name_parts[1]
+  if (length(name_parts) > 1) {
+    na_percentage <- switch(name_parts[2],
+                            "1" = "5% NA",
+                            "2" = "20% NA",
+                            "3" = "50% NA",
+                            "4" = "75% NA",
+                            "data" = "0% NA")
+  } else {
+    na_percentage <- "0% NA"
+  }
+  return(list(project_name = project_name, na_percentage = na_percentage))
+}
+
+# Get a list of all .mlxtran files in the directory
+mlxtran_files <- list.files(path = mlxtran_directory, pattern = "*.mlxtran", full.names = TRUE)
+
+# Initialize an empty list to store the plots
+vpc_plots <- list()
+
+# Loop through each .mlxtran file
+for (i in seq_along(mlxtran_files)) {
+  
+  # Load the Monolix project
+  project_file <- mlxtran_files[i]
+  loadProject(project_file)
+  
+  # Extract project name and percentage of NA
+  project_info <- extract_project_info(tools::file_path_sans_ext(basename(project_file)))
+  
+  # Draw the VPC without stratification
+  vpc_plot <- plotVpc(obsName = "DV",
+                      settings = list(outlierDots = FALSE, useCorrpred = TRUE, grid = FALSE,
+                                      ylab = "Concentration", empPercentiles=TRUE,predPercentiles =TRUE,  empirical=TRUE, theoreticala=TRUE, xlab = "Time (in hour)"))
+  
+  # Add title and custom theme to the plot
+  vpc_plot <- vpc_plot +
+    ggtitle(paste("pcVPC of", project_info$project_name, "with", project_info$na_percentage)) +
+    my_theme
+  
+  # Store the plot in the list
+  vpc_plots[[i]] <- vpc_plot
+  
+
+}
+
+# Combine all the plots into one using ggarrange, with a shared legend
+combined_plot <- ggarrange(plotlist = vpc_plots, 
+                           ncol = 3,  # 3 plots per row
+                           nrow = ceiling(length(vpc_plots) / 3),  # Adjust rows based on the number of plots
+                           common.legend = TRUE,                   # Use the same legend
+                           legend = "bottom")                      # Place the legend at the bottom
+
+# Save the combined plot as a PNG
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 18, units = 'in', res = 900)
+print(combined_plot)
+dev.off()
 
