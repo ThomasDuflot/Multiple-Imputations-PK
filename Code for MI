@@ -16,6 +16,9 @@ library(caret)
 library(PFIM)
 library(magick)
 library(VIM)
+library(lixoftConnectors)
+initializeLixoftConnectors(software = "monolix")
+
 
 
 modelEquations = list(
@@ -2629,13 +2632,7 @@ print(doc, target = "Improved_Merged_Correlation_Table.docx")
 
 
 
-# Load necessary libraries
-library(RsSimulx) # Ensure you have RsSimulx installed for Monolix
-library(ggplot2)
-library(ggpubr)
-library(lixoftConnectors)
-initializeLixoftConnectors(software = "monolix")
-initializeLixoftConnectors(path = "C:/Program Files/Lixoft/MonolixSuite2024R1")
+
 
 # Define the directory where your mlxtran files are stored
 mlxtran_directory <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
