@@ -2206,6 +2206,58 @@ print(CrCl_Plot_fixed)
 dev.off()
 
 
+OFVval <- read.csv2("D:/MOBILITE/1er papier - Simulation Covariables/OBJ/OBJ.csv")
+
+
+
+
+# Define the custom palette using the first 10 colors of `jco` and colors 3 to 8 of `nejm`
+custom_palette <- c(
+  pal_jco("default")(10),  # First 10 colors from jco palette
+  pal_nejm("default")(8)[3:8]   # Colors 3 to 8 from nejm palette
+)
+
+# Add a new column for the combined label with BICc and OFV values
+OFVval <- OFVval %>%
+  mutate(Label = paste0(Model, "\nOFV: ", OFV, "   BICc: ", BICc))  # Add values to labels
+
+# Reshape data to have OFV and BICc in long format for faceting
+plot_data <- OFVval %>%
+  pivot_longer(cols = c(OFV, BICc), names_to = "Metric", values_to = "Value") %>%
+  group_by(Metric) %>%
+  arrange(desc(Value)) %>%
+  mutate(
+    Label = factor(Label, levels = unique(Label)),  # Set Label factor levels for sorted legend
+    Model = factor(Model)  # Keep Model as factor without reordering x-axis
+  ) %>%
+  ungroup()  # Ungroup after setting factor levels
+
+# Create the bar plot using Label as the fill
+OFV_plot <- ggplot(plot_data, aes(x = reorder(Model, -Value), y = Value, fill = Label)) +
+  geom_col(position = position_dodge(width = 0.3), color = "black") +  # Reduce width for more space between bars
+  coord_cartesian(ylim = c(1450, 1750)) +  # Zoom in on Y-axis from 1450 to 1750
+  facet_wrap(~ Metric, scales = "free_y") +  # Facet by Metric (OFV and BICc)
+  labs(title = "Comparison of OFV and BICc by Model",
+       x = "Model",
+       y = "Value") +
+  scale_fill_manual(values = custom_palette) +  # Apply the custom palette
+  my_theme +  # Apply your custom theme
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for readability
+    legend.spacing.y = unit(1, "cm"),  # Add space between legend items
+    legend.key.height = unit(1, "cm"),  # Increase legend key height for additional spacing
+    panel.spacing = unit(1, "cm")  # Increase space between facets
+  )
+
+# Save the plot with a wider width to accommodate the layout
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/OFV.png", width = 20, height = 9, units = 'in', res = 900)
+print(OFV_plot)
+dev.off()
+
+
+
+
+
 
 # Define the base directory where the Monolix folder is located
 base_dir <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
@@ -2815,4 +2867,22 @@ combined_plot <- ggarrange(plotlist = vpc_plots,
 png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 18, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
+
+
+
+
+
+mrgsolv_val <- merged_imputed_data_list$final_data %>%
+  group_by(ID) %>%
+  dplyr::slice(1) %>%
+  select(ID, CL, VC, KA) %>%
+  ungroup()
+
+mlx_val <-   all_data$final_data$parameters %>%
+group_by(id) %>%
+  dplyr::slice(1) %>%
+  select(id, Cl_mode, V_mode, ka_mode) %>%
+  ungroup()
+
+
 
