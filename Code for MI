@@ -2336,10 +2336,7 @@ head(final_shrinkage_wide)
 
 
 final_shrinkage_wide$Missing_Percentage[is.na(final_shrinkage_wide$Missing_Percentage)] <- "0%"
-# Load required packages
-library(ggplot2)
-library(dplyr)
-library(tidyr)
+
 
 # Replace NA in Missing_Percentage with '0%'
 final_shrinkage_wide$Missing_Percentage[is.na(final_shrinkage_wide$Missing_Percentage)] <- "0%"
@@ -2395,18 +2392,11 @@ combined_plot <- ggarrange(
 )
 
 # Save the plot as a PNG file with specified dimensions and resolution
-png("Shrinkage_custom_adjusted.png", width = 16, height = 9, units = 'in', res = 900)
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Shrinkage_custom_adjusted.png", width = 16, height = 9, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
 
-
-
-# Load required packages
-library(ggpubr)
-library(ggsci)  # For scale_color_jco and scale_fill_jco
-library(tidyr)
-library(dplyr)
 
 # Define which criteria we're interested in (OFV and BICc)
 log_likelihood_criteria <- c("OFV", "BICc")
@@ -2524,9 +2514,131 @@ combined_log_likelihood_plot <- ggarrange(
 )
 
 # Save the plot as a PNG file with specified dimensions and resolution
-png("LogLikelihood_OFV_BICc_corrected_legend_final.png", width = 16, height = 9, units = 'in', res = 900)
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/LogLikelihood_OFV_BICc.png", width = 16, height = 9, units = 'in', res = 900)
 print(combined_log_likelihood_plot)
 dev.off()
+
+
+
+
+
+# Prepare data for plotting
+population_data_list <- list()
+
+# Extract the population parameters data from each subfolder
+for (subfolder in names(all_data)) {
+  if ("population_parameters" %in% names(all_data[[subfolder]])) {
+    population_df <- all_data[[subfolder]]$population_parameters
+    
+    # Extract Missing_Percentage from folder names
+    missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
+                                 ifelse(grepl("_1$", subfolder), "5%",
+                                        ifelse(grepl("_2$", subfolder), "20%",
+                                               ifelse(grepl("_3$", subfolder), "50%", "75%"))))
+    
+    population_values <- data.frame(
+      File = subfolder,
+      Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
+      Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
+      parameter = population_df$parameter,         # Population parameters
+      Value = population_df$value,                 # Corresponding values
+      P2.5 = population_df$P2.5_sa,                # 2.5th percentile
+      P97.5 = population_df$P97.5_sa               # 97.5th percentile
+    )
+    
+    # Apply exp() to specific parameters (beta_ka_PPI_1 and beta_Cl_UM_1) and their percentiles
+    population_values$Value <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
+                                      exp(population_values$Value),
+                                      population_values$Value)
+    
+    population_values$P2.5 <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
+                                     exp(population_values$P2.5),
+                                     population_values$P2.5)
+    
+    population_values$P97.5 <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
+                                      exp(population_values$P97.5),
+                                      population_values$P97.5)
+    
+    population_data_list[[subfolder]] <- population_values
+  }
+}
+
+# Combine the data into one dataframe
+population_param_combined <- do.call(rbind, population_data_list)
+
+# Reorder the Missing_Percentage to start with 0%
+population_param_combined$Missing_Percentage <- factor(
+  population_param_combined$Missing_Percentage, 
+  levels = c("0%", "5%", "20%", "50%", "75%")
+)
+
+# Set color levels for Base_Name with final_data appearing last
+base_name_levels <- c("amelia", "MF", "mice", "midas", "xgb", "final_data")
+population_param_combined$Base_Name <- factor(population_param_combined$Base_Name, levels = base_name_levels)
+
+# Get the jco color palette
+jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
+
+# Define the custom color mapping for each Base_Name in the correct order
+custom_colors <- c("amelia" = jco_colors[1],
+                   "MF" = jco_colors[2],
+                   "mice" = jco_colors[3],
+                   "midas" = jco_colors[4],
+                   "xgb" = jco_colors[5],
+                   "final_data" = jco_colors[6])  # Make sure final_data is the last
+
+# Reorder the Base_Name levels to ensure final_data is last in the order
+population_param_combined$Base_Name <- factor(
+  population_param_combined$Base_Name, 
+  levels = c("amelia", "MF", "mice", "midas", "xgb", "final_data")  # Ensure final_data is last
+)
+
+# Create plots for each population parameter
+plot_list <- list()
+
+# Loop through unique parameters to generate plots for each
+for (param in unique(population_param_combined$parameter)) {
+  
+  # Filter data for the current parameter
+  plot_data <- population_param_combined %>% filter(parameter == param)
+  
+  # Separate the data for Missing_Percentage = 0% and the rest
+  plot_data_0 <- plot_data %>% filter(Missing_Percentage == "0%")
+  plot_data_rest <- plot_data %>% filter(Missing_Percentage != "0%")
+  
+  # Get the final_data value for this parameter
+  final_value <- plot_data %>% filter(Base_Name == "final_data") %>% pull(Value) %>% mean(na.rm = TRUE)
+  
+  # Create the plot using barplots with regular and narrow bar widths and error bars for percentiles
+  p <- ggplot() +
+    geom_col(data = plot_data_0, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
+             position = position_dodge(width = 0.75), color = "black", width = 0.14) +  # Narrow bars for 0%
+    geom_col(data = plot_data_rest, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
+             position = position_dodge(width = 0.75), color = "black", width = 0.7) +  # Regular bars for the rest
+    geom_errorbar(data = plot_data, aes(x = Missing_Percentage, ymin = P2.5, ymax = P97.5, group = Base_Name), 
+                  position = position_dodge(width = 0.75), width = 0.25, color = "black") +  # Error bars for percentiles
+    geom_hline(yintercept = final_value, linetype = "dashed", color = "black", size = 1) +  # Add black horizontal line
+    labs(title = param,  # Show the parameter name
+         x = "Missing Percentage",
+         y = "Value") +
+    scale_fill_manual(values = custom_colors, breaks = c("amelia", "MF", "mice", "midas", "xgb", "final_data")) +  # Set legend order manually
+    my_theme +  # Apply your custom theme
+    guides(fill = guide_legend(title = NULL))  # Remove the legend title
+  
+  # Store the plot in the list
+  plot_list[[param]] <- p
+}
+
+# Arrange the plots for all parameters in a grid with 3 columns
+combined_population_plot <- ggarrange(plotlist = plot_list, ncol = 3, nrow = ceiling(length(plot_list) / 3), 
+                                      common.legend = TRUE, legend = "right")
+
+# Save the plot as a PNG file with a higher height dimension for better spacing
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Population_Parameters_Plot_with_errorbars.png", width = 16, height = 12, units = 'in', res = 900)  # Increase height
+print(combined_population_plot)
+dev.off()
+
+
 
 
 
@@ -2659,10 +2771,14 @@ extract_project_info <- function(project_name) {
 # Get a list of all .mlxtran files in the directory
 mlxtran_files <- list.files(path = mlxtran_directory, pattern = "*.mlxtran", full.names = TRUE)
 
+# Define fixed x and y axis limits
+x_limits <- c(0, 40)
+y_limits <- c(0, 20)
+
 # Initialize an empty list to store the plots
 vpc_plots <- list()
 
-# Loop through each .mlxtran file
+# Loop through each .mlxtran file to create the plots
 for (i in seq_along(mlxtran_files)) {
   
   # Load the Monolix project
@@ -2675,17 +2791,17 @@ for (i in seq_along(mlxtran_files)) {
   # Draw the VPC without stratification
   vpc_plot <- plotVpc(obsName = "DV",
                       settings = list(outlierDots = FALSE, useCorrpred = TRUE, grid = FALSE,
-                                      ylab = "Concentration", empPercentiles=TRUE,predPercentiles =TRUE,  empirical=TRUE, theoreticala=TRUE, xlab = "Time (in hour)"))
+                                      ylab = "Concentration", empPercentiles=TRUE, predPercentiles=TRUE, empirical=TRUE, theoretical=TRUE, xlab = "Time (in hour)"))
   
-  # Add title and custom theme to the plot
+  # Add consistent x and y axis limits, title, and custom theme to the plot
   vpc_plot <- vpc_plot +
     ggtitle(paste("pcVPC of", project_info$project_name, "with", project_info$na_percentage)) +
+    xlim(x_limits) +
+    ylim(y_limits) +
     my_theme
   
   # Store the plot in the list
   vpc_plots[[i]] <- vpc_plot
-  
-
 }
 
 # Combine all the plots into one using ggarrange, with a shared legend
