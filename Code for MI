@@ -3063,3 +3063,220 @@ print(KA_Plot_fixed)
 dev.off
 
 
+
+
+
+
+
+param_dfs <- list()
+
+# Process the final_data
+final_data_params <- all_data$final_data$parameters %>%
+  group_by(id) %>%
+  dplyr::slice(1) %>%
+  select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
+  ungroup() %>%
+  mutate(
+    Missing_Percentage = factor("0% NA", levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+    Imputation_Method = factor("Final Data", levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB", "Final Data"))
+  )
+
+# Add to the list
+param_dfs[["Final Data"]] <- final_data_params
+
+# Get the names of the datasets (excluding 'final_data')
+dataset_names <- setdiff(names(all_data), "final_data")
+
+# Process each imputed dataset
+for (dataset_name in dataset_names) {
+  # Get the dataset
+  dataset <- all_data[[dataset_name]]
+  
+  # Extract PK parameters
+  params_df <- dataset$parameters %>%
+    group_by(id) %>%
+    dplyr::slice(1) %>%
+    select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
+    ungroup()
+  
+  # Determine the Imputation_Method
+  if (grepl("^amelia", dataset_name, ignore.case = TRUE)) {
+    method <- "Amelia"
+  } else if (grepl("^MF", dataset_name, ignore.case = TRUE)) {
+    method <- "MF"
+  } else if (grepl("^MIDAS", dataset_name, ignore.case = TRUE)) {
+    method <- "MIDAS"
+  } else if (grepl("^mice", dataset_name, ignore.case = TRUE)) {
+    method <- "MICE"
+  } else if (grepl("^XGB", dataset_name, ignore.case = TRUE)) {
+    method <- "XGB"
+  } else {
+    stop(paste("Unknown method in dataset name:", dataset_name))
+  }
+  
+  # Extract the missing percentage from the dataset name
+  # Assuming the dataset names end with '_1', '_2', '_3', '_4'
+  if (grepl("_1$", dataset_name)) {
+    percentage <- "5% NA"
+  } else if (grepl("_2$", dataset_name)) {
+    percentage <- "20% NA"
+  } else if (grepl("_3$", dataset_name)) {
+    percentage <- "50% NA"
+  } else if (grepl("_4$", dataset_name)) {
+    percentage <- "75% NA"
+  } else {
+    stop(paste("Could not determine Missing_Percentage for dataset:", dataset_name))
+  }
+  
+  # Add the columns to params_df
+  params_df <- params_df %>%
+    mutate(
+      Missing_Percentage = factor(percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+      Imputation_Method = factor(method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB", "Final Data"))
+    )
+  
+  # Add to the list with the dataset_name as key
+  param_dfs[[dataset_name]] <- params_df
+}
+
+# Step 2: Extract IDs with missing data for each missing percentage
+
+# Initialize a list to store IDs with missing data
+missing_ids_list <- list()
+
+# Loop over each dataset in 'missing_data_list'
+for (dataset_name in names(missing_data_list)) {
+  # Extract the percentage from the dataset name
+  # Assuming dataset names are like "missing_5perc", "missing_20perc", etc.
+  percentage_match <- str_extract(dataset_name, "\\d+")
+  
+  if (!is.na(percentage_match)) {
+    percentage_value <- as.integer(percentage_match)
+    percentage <- paste0(percentage_value, "% NA")
+  } else {
+    stop(paste("Could not extract percentage from dataset name:", dataset_name))
+  }
+  
+  # Get the dataset with missing data
+  data_with_missing <- missing_data_list[[dataset_name]]
+  
+  # Identify IDs with any missing data
+  ids_with_missing <- data_with_missing %>%
+    filter(is.na(WT) | is.na(CrCl) | is.na(PPI) | is.na(UM)) %>%
+    select(ID) %>%
+    distinct()
+  
+  # Store the IDs in the list
+  missing_ids_list[[percentage]] <- ids_with_missing$ID
+}
+
+# Step 3: Perform comparisons for IDs with missing data
+
+# Define the comparison function
+compare_params <- function(imputed_df, final_df, ids_with_missing) {
+  # Filter both data frames to include only IDs with missing data
+  imputed_df_filtered <- imputed_df %>% filter(ID %in% ids_with_missing)
+  final_df_filtered <- final_df %>% filter(ID %in% ids_with_missing)
+  
+  # Ensure IDs are of the same type
+  imputed_df_filtered$ID <- as.character(imputed_df_filtered$ID)
+  final_df_filtered$ID <- as.character(final_df_filtered$ID)
+  
+  # Proceed with the comparison
+  comparison_df <- imputed_df_filtered %>%
+    inner_join(final_df_filtered, by = "ID", suffix = c("_imputed", "_original")) %>%
+    mutate(
+      CL_diff = CL_imputed - CL_original,
+      VC_diff = VC_imputed - VC_original,
+      KA_diff = KA_imputed - KA_original,
+      CL_PE = (CL_imputed - CL_original) / CL_original * 100,
+      VC_PE = (VC_imputed - VC_original) / VC_original * 100,
+      KA_PE = (KA_imputed - KA_original) / KA_original * 100
+    )
+  return(comparison_df)
+}
+
+# Initialize a list to store comparison results
+comparison_results <- list()
+
+# Loop over the imputed datasets (excluding 'Final Data')
+for (name in names(param_dfs)) {
+  if (name != "Final Data") {
+    imputed_df <- param_dfs[[name]]
+    final_df <- param_dfs[["Final Data"]]
+    
+    # Get the Imputation_Method and Missing_Percentage
+    method <- as.character(unique(imputed_df$Imputation_Method))
+    percentage <- as.character(unique(imputed_df$Missing_Percentage))
+    
+    # Get the IDs with missing data for this percentage
+    ids_with_missing <- missing_ids_list[[percentage]]
+    
+    # Check if ids_with_missing is NULL or empty
+    if (is.null(ids_with_missing)) {
+      message(paste("No IDs with missing data found for", percentage))
+      next  # Skip to the next iteration
+    } else if (length(ids_with_missing) == 0) {
+      message(paste("IDs with missing data list is empty for", percentage))
+      next  # Skip to the next iteration
+    }
+    
+    # Ensure IDs are of the same type
+    ids_with_missing <- as.character(ids_with_missing)
+    imputed_df$ID <- as.character(imputed_df$ID)
+    final_df$ID <- as.character(final_df$ID)
+    
+    # Perform the comparison using the filtered IDs
+    comparison_df <- compare_params(imputed_df, final_df, ids_with_missing)
+    
+    # Add metadata
+    comparison_df <- comparison_df %>%
+      mutate(
+        Imputation_Method = factor(method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB")),
+        Missing_Percentage = factor(percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+      )
+    
+    # Store in the list
+    comparison_results[[name]] <- comparison_df
+  }
+}
+
+# Combine all comparison results into one data frame
+pk_param_comparison_combined <- bind_rows(comparison_results)
+
+# Step 4: Proceed with analysis or visualization
+
+# Check the combined data frame
+head(pk_param_comparison_combined)
+
+# Ensure Imputation_Method and Missing_Percentage are factors
+pk_param_comparison_combined <- pk_param_comparison_combined %>%
+  mutate(
+    Imputation_Method = factor(Imputation_Method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB")),
+    Missing_Percentage = factor(Missing_Percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+  )
+
+# Example visualization
+# Reshape the data for plotting
+pk_params_long <- pk_param_comparison_combined %>%
+  pivot_longer(
+    cols = c("CL_PE", "VC_PE", "KA_PE"),
+    names_to = "Parameter",
+    values_to = "Percentage_Error"
+  )
+
+# Plot percentage errors
+ggplot(pk_params_long, aes(x = Missing_Percentage, y = Percentage_Error, fill = Imputation_Method)) +
+  geom_boxplot() +
+  facet_wrap(~ Parameter, scales = "free") +
+  labs(
+    title = "Percentage Error of PK Parameters for IDs with Missing Data",
+    x = "Missing Percentage",
+    y = "Percentage Error (%)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
