@@ -2857,6 +2857,8 @@ for (i in seq_along(mlxtran_files)) {
   # Store the plot in the list
   vpc_plots[[i]] <- vpc_plot
 }
+# Modify the title of plot 5 to "Original 0% NA"
+vpc_plots[[5]] <- vpc_plots[[5]] + ggtitle("Original with 0% NA")
 
 
 
@@ -2864,7 +2866,7 @@ for (i in seq_along(mlxtran_files)) {
 plot_indices <- c(
   5, 1, 2, 3, 4, 5, 6, 7, 8, 9,
   5, 10, 11, 12, 13, 5, 14, 15,
-  16, 17, 5, 18, 19, 20, 11
+  16, 17, 5, 18, 19, 20, 21
 )
 
 combined_plot <- ggarrange(
@@ -2876,7 +2878,7 @@ combined_plot <- ggarrange(
 )
 
 
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC2.png", width = 12, height = 12, units = 'in', res = 900)
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 12, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
