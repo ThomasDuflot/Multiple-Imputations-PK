@@ -16,6 +16,7 @@ library(caret)
 library(PFIM)
 library(magick)
 library(VIM)
+library(ggh4x)
 library(lixoftConnectors)
 initializeLixoftConnectors(software = "monolix")
 library(purrr)
@@ -3068,17 +3069,36 @@ dev.off
 
 
 
+# Load necessary libraries
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(ggsci)
+library(ggh4x)  # For facet_grid2
+library(stringr)
+
+# Define the desired order of imputation methods
+desired_method_order <- c("Amelia", "MF", "MICE", "MIDAS", "XGB", "Final Data")
+
+# Step 1: Extract PK parameters from all datasets and label them
+
+# Initialize a list to store the parameter data frames
 param_dfs <- list()
 
 # Process the final_data
 final_data_params <- all_data$final_data$parameters %>%
   group_by(id) %>%
-  dplyr::slice(1) %>%
-  select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
+  summarise(
+    CL = first(Cl_mode),
+    VC = first(V_mode),
+    KA = first(ka_mode)
+  ) %>%
   ungroup() %>%
+  rename(ID = id) %>%
   mutate(
     Missing_Percentage = factor("0% NA", levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
-    Imputation_Method = factor("Final Data", levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB", "Final Data"))
+    Imputation_Method = factor("Final Data", levels = desired_method_order)
   )
 
 # Add to the list
@@ -3095,19 +3115,23 @@ for (dataset_name in dataset_names) {
   # Extract PK parameters
   params_df <- dataset$parameters %>%
     group_by(id) %>%
-    dplyr::slice(1) %>%
-    select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
-    ungroup()
+    summarise(
+      CL = first(Cl_mode),
+      VC = first(V_mode),
+      KA = first(ka_mode)
+    ) %>%
+    ungroup() %>%
+    rename(ID = id)
   
   # Determine the Imputation_Method
   if (grepl("^amelia", dataset_name, ignore.case = TRUE)) {
     method <- "Amelia"
   } else if (grepl("^MF", dataset_name, ignore.case = TRUE)) {
     method <- "MF"
-  } else if (grepl("^MIDAS", dataset_name, ignore.case = TRUE)) {
-    method <- "MIDAS"
   } else if (grepl("^mice", dataset_name, ignore.case = TRUE)) {
     method <- "MICE"
+  } else if (grepl("^MIDAS", dataset_name, ignore.case = TRUE)) {
+    method <- "MIDAS"
   } else if (grepl("^XGB", dataset_name, ignore.case = TRUE)) {
     method <- "XGB"
   } else {
@@ -3128,11 +3152,11 @@ for (dataset_name in dataset_names) {
     stop(paste("Could not determine Missing_Percentage for dataset:", dataset_name))
   }
   
-  # Add the columns to params_df
+  # Add the columns to params_df with the correct factor levels
   params_df <- params_df %>%
     mutate(
       Missing_Percentage = factor(percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
-      Imputation_Method = factor(method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB", "Final Data"))
+      Imputation_Method = factor(method, levels = desired_method_order)
     )
   
   # Add to the list with the dataset_name as key
@@ -3232,7 +3256,7 @@ for (name in names(param_dfs)) {
     # Add metadata
     comparison_df <- comparison_df %>%
       mutate(
-        Imputation_Method = factor(method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB")),
+        Imputation_Method = factor(method, levels = desired_method_order),
         Missing_Percentage = factor(percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
       )
     
@@ -3244,39 +3268,94 @@ for (name in names(param_dfs)) {
 # Combine all comparison results into one data frame
 pk_param_comparison_combined <- bind_rows(comparison_results)
 
-# Step 4: Proceed with analysis or visualization
-
-# Check the combined data frame
-head(pk_param_comparison_combined)
-
-# Ensure Imputation_Method and Missing_Percentage are factors
+# Ensure Imputation_Method and Missing_Percentage are factors with desired levels
 pk_param_comparison_combined <- pk_param_comparison_combined %>%
   mutate(
-    Imputation_Method = factor(Imputation_Method, levels = c("Amelia", "MF", "MIDAS", "MICE", "XGB")),
+    Imputation_Method = factor(Imputation_Method, levels = desired_method_order),
     Missing_Percentage = factor(Missing_Percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
   )
 
-# Example visualization
-# Reshape the data for plotting
+# Step 4: Reshape the data for plotting
+
+# Reshape the data to have both Absolute Error and Percentage Error
 pk_params_long <- pk_param_comparison_combined %>%
   pivot_longer(
-    cols = c("CL_PE", "VC_PE", "KA_PE"),
-    names_to = "Parameter",
-    values_to = "Percentage_Error"
+    cols = c(CL_diff, VC_diff, KA_diff, CL_PE, VC_PE, KA_PE),
+    names_to = c("Parameter", "ErrorType"),
+    names_pattern = "([A-Z]{2})_(.*)",
+    values_to = "ErrorValue"
+  ) %>%
+  mutate(
+    ErrorType = case_when(
+      ErrorType == "diff" ~ "Absolute Error",
+      ErrorType == "PE" ~ "Percentage Error"
+    ),
+    Parameter = factor(Parameter, levels = c("CL", "VC", "KA")),
+    ErrorType = factor(ErrorType, levels = c("Absolute Error", "Percentage Error")),
+    Imputation_Method = factor(Imputation_Method, levels = desired_method_order)  # Ensure levels are set
   )
 
-# Plot percentage errors
-ggplot(pk_params_long, aes(x = Missing_Percentage, y = Percentage_Error, fill = Imputation_Method)) +
-  geom_boxplot() +
-  facet_wrap(~ Parameter, scales = "free") +
-  labs(
-    title = "Percentage Error of PK Parameters for IDs with Missing Data",
-    x = "Missing Percentage",
-    y = "Percentage Error (%)"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(hjust = 0.5),
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+# Step 5: Create and save plots for each parameter
+
+# Define your custom theme or use a built-in one
+my_theme <- theme_minimal(base_size = 14)
+
+# Function to create plot for a given parameter
+create_parameter_plot <- function(param_name) {
+  # Filter the data for the specific parameter
+  data_param <- pk_params_long %>% filter(Parameter == param_name)
+  
+  # Create the plot
+  plot_param <- ggplot(data_param, aes(x = Missing_Percentage, y = ErrorValue, fill = Imputation_Method)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA, color = "black", linewidth = 1.2) +
+    geom_point(
+      color = "black",
+      position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.75),
+      alpha = 1,
+      size = 0.6,
+      show.legend = FALSE
+    ) +
+    facet_grid2(ErrorType ~ ., scales = "free", independent = "y") +  # Facet only by ErrorType
+    labs(
+      title = paste("Comparison of Absolute and Percentage Errors for", param_name),
+      x = "Percentage of Missing Data",
+      y = "Error Value",
+      fill = "Imputation Method"
+    ) +
+    scale_color_jco() +
+    scale_fill_jco() +
+    my_theme +
+    theme(
+      strip.background = element_rect(fill = "grey90", color = "grey50"),
+      strip.text = element_text(face = "bold", color = "black"),
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing.y = unit(1, "cm"),
+      panel.border = element_rect(
+        colour = "black",
+        fill = NA,
+        size = 0.5
+      )
+    )
+  
+  return(plot_param)
+}
+
+# Get the unique parameters
+parameters <- unique(pk_params_long$Parameter)
+
+# Loop over each parameter to generate and save the plots
+for (param in parameters) {
+  # Generate the plot
+  plot_param <- create_parameter_plot(param)
+  
+  # Display the plot (optional)
+  print(plot_param)
+  
+  # Save the plot to a PNG file
+  file_name <- paste0("PK_Error_Comparison_", param, ".png")
+  png(file_name, width = 12, height = 9, units = 'in', res = 900)
+  print(plot_param)
+  dev.off()
+}
 
