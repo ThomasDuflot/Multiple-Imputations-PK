@@ -16,6 +16,7 @@ library(caret)
 library(PFIM)
 library(magick)
 library(VIM)
+library(stringer)
 library(ggh4x)
 library(lixoftConnectors)
 initializeLixoftConnectors(software = "monolix")
@@ -3069,14 +3070,6 @@ dev.off
 
 
 
-# Load necessary libraries
-library(dplyr)
-library(purrr)
-library(tidyr)
-library(ggplot2)
-library(ggsci)
-library(ggh4x)  # For facet_grid2
-library(stringr)
 
 # Define the desired order of imputation methods
 desired_method_order <- c("Amelia", "MF", "MICE", "MIDAS", "XGB", "Final Data")
@@ -3297,8 +3290,6 @@ pk_params_long <- pk_param_comparison_combined %>%
 
 # Step 5: Create and save plots for each parameter
 
-# Define your custom theme or use a built-in one
-my_theme <- theme_minimal(base_size = 14)
 
 # Function to create plot for a given parameter
 create_parameter_plot <- function(param_name) {
@@ -3354,7 +3345,7 @@ for (param in parameters) {
   
   # Save the plot to a PNG file
   file_name <- paste0("PK_Error_Comparison_", param, ".png")
-  png(file_name, width = 12, height = 9, units = 'in', res = 900)
+  png(file_name, width = 16, height =9, units = 'in', res = 900)
   print(plot_param)
   dev.off()
 }
