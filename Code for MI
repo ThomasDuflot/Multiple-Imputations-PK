@@ -2878,7 +2878,11 @@ mrgsolv_val <- merged_imputed_data_list$final_data %>%
   select(ID, CL, VC, KA) %>%
   ungroup()
 
-
+mlx_val <-   all_data$final_data$parameters %>%
+group_by(id) %>%
+  dplyr::slice(1) %>%
+  select(id, Cl_mode, V_mode, ka_mode) %>%
+  ungroup()
 
 # Step 1: Extract and rename the required columns for each dataframe in the list
 mlx_val_list <- map(all_data, ~ .x$parameters %>%
@@ -2888,9 +2892,9 @@ mlx_val_list <- map(all_data, ~ .x$parameters %>%
   ungroup())
 
 # Step 2: Combine all extracted data into a single dataframe
-combined_mlx_val <- bind_rows(mlx_val_list, .id = "source")  # Adds a column `source` indicating the source dataframe
+combined_mlx_val <- bind_rows(mlx_val_list, .id = "source")  # Adds a column source indicating the source dataframe
 
-# Step 3: Update `source` to readable missing percentage levels and imputation methods
+# Step 3: Update source to readable missing percentage levels and imputation methods
 combined_mlx_val <- combined_mlx_val %>%
   mutate(
     Missing_Percentage = case_when(
@@ -2927,98 +2931,135 @@ combined_mlx_val <- combined_mlx_val %>%
   )
 
 
-
-library(dplyr)
-library(ggplot2)
-library(ggsci)
-
-# Define the function for plotting histogram with log-normal fit and density per subset
 plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, variable_name) {
-  # Set binwidth based on the variable
-  binwidth_value <- if (variable == "CL") 0.1 else if (variable == "VC") 1 else 0.1
-  
-  # Create the base plot
-  plot <- ggplot(data, aes_string(x = variable)) +
-    # Histogram with conditional scaling for "0% NA" group
-    geom_histogram(aes(y = if_else(Missing_Percentage == "0% NA", ..count.. / 5, ..count..), fill = Imputation_Method),
-                   binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
+    library(dplyr)
+    library(ggplot2)
+    library(ggsci)
     
-    # Log-normal curve per subset
-    stat_function(
-      fun = function(x) {
-        subset_params <- data %>%
-          filter(!!sym(variable) > 0) %>%
-          group_by(Missing_Percentage, Imputation_Method) %>%
-          summarize(
+    # Set binwidth based on the variable
+    binwidth_value <- if (variable == "CL") 0.2 else if (variable == "VC") 1 else 0.1
+    
+    # Compute per-group parameters for log-normal distribution
+    subset_params <- data %>%
+        filter(!!sym(variable) > 0) %>%
+        group_by(Missing_Percentage, Imputation_Method) %>%
+        summarize(
             meanlog = mean(log(!!sym(variable)), na.rm = TRUE),
             sdlog = sd(log(!!sym(variable)), na.rm = TRUE),
             count = n(),
-            .groups = "drop"
-          )
-        dlnorm(x, meanlog = subset_params$meanlog, sdlog = subset_params$sdlog) * subset_params$count * binwidth_value
-      },
-      aes(color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
-      size = 1,
-      show.legend = TRUE
-    ) +
+            .groups = "keep"  # Retain grouping
+        )
     
-    # Density curve per subset
-    geom_density(aes(y = ..density.. * nrow(data) * binwidth_value,
-                     linetype = "Density Estimate", color = "Density Estimate",
-                     group = interaction(Imputation_Method, Missing_Percentage)),
-                 size = 1, alpha = 0.5, show.legend = TRUE) +
+    # Create a grid of x-values
+    x_grid <- seq(min(data[[variable]], na.rm = TRUE), max(data[[variable]], na.rm = TRUE), length.out = 100)
     
-    # Facet by Missing_Percentage and Imputation_Method with custom spacing
-    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+    # Compute log-normal density values per group
+    lognormal_data <- subset_params %>%
+        group_modify(~ {
+            meanlog = .x$meanlog[1]
+            sdlog = .x$sdlog[1]
+            count = .x$count[1]
+            # Handle cases where sdlog is NA or zero
+            if (is.na(sdlog) || sdlog == 0 || count < 2) {
+                return(data.frame(
+                    x = numeric(0),
+                    y = numeric(0)
+                ))
+            }
+            data.frame(
+                x = x_grid,
+                y = dlnorm(x_grid, meanlog, sdlog) * count * binwidth_value
+            )
+        })
     
-    # Add the color palette from ggsci
-    scale_fill_jco() +
+    # Compute density estimates per group
+    density_data <- data %>%
+        group_by(Missing_Percentage, Imputation_Method) %>%
+        group_modify(~ {
+            if(nrow(.x) < 2){
+                return(data.frame(
+                    x = numeric(0),
+                    y = numeric(0)
+                ))
+            }
+            dens <- density(.x[[variable]], na.rm = TRUE)
+            data.frame(
+                x = dens$x,
+                y = dens$y * length(.x[[variable]]) * binwidth_value
+            )
+        })
     
-    # Add manual legends for Log-normal and Density Estimate
-    scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")) +  
-    scale_color_manual(name = "Legend", values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")) + 
+    # Create the base plot
+    plot <- ggplot(data, aes_string(x = variable)) +
+        # Histogram
+        geom_histogram(aes(y = ..count.., fill = Imputation_Method),
+                       binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
+        # Log-normal curve per group
+        geom_line(data = lognormal_data,
+                  aes(x = x, y = y, color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
+                  size = 1, show.legend = TRUE) +
+        # Density curve per group
+        geom_line(data = density_data,
+                  aes(x = x, y = y, color = "Density Estimate", linetype = "Density Estimate"),
+                  size = 1, alpha = 0.5, show.legend = TRUE) +
+        # Facet by Missing_Percentage and Imputation_Method
+        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+        # Add the color palette from ggsci
+        scale_fill_jco() +
+        # Add manual legends for Log-normal and Density Estimate
+        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")) +
+        scale_color_manual(name = "Legend", values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")) +
+        labs(title = paste("Distribution of", variable_name),
+             x = variable_name,
+             y = "Count") +
+        # Custom theme with spacing and legend
+        theme_minimal() +
+        theme(
+            plot.title = element_text(hjust = 0.5, face = "bold"),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            strip.text = element_text(face = "bold"),
+            panel.spacing = unit(1, "lines"),
+            legend.position = "top",
+            legend.key = element_rect(fill = "white", color = "black"),
+            legend.title = element_text(face = "bold"),
+            legend.text = element_text(size = 12),
+            panel.border = element_rect(color = "grey", fill = NA, size = 1),
+            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+        ) +
+        # Custom guides for the legend
+        guides(
+            fill = guide_legend(title = "Imputation Method"),
+            linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
+            color = "none"
+        )
     
-    labs(title = paste("Distribution of", variable_name),
-         x = variable_name,
-         y = "Count") +
+    return(list(
+        plot = plot,
+        lognormal_data = lognormal_data,
+        density_data = density_data
+    ))
     
-    # Custom theme with spacing and legend
-    theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      axis.title = element_text(size = 16),
-      axis.text = element_text(size = 14),
-      strip.text = element_text(face = "bold"),
-      
-      # Add spacing between facets for better separation
-      panel.spacing = unit(1, "lines"),
-      
-      # Adjust legend
-      legend.position = "top",
-      legend.key = element_rect(fill = "white", color = "black"),
-      legend.title = element_text(face = "bold"),
-      legend.text = element_text(size = 12),
-      
-      # Add grey borders to each facet panel
-      panel.border = element_rect(color = "grey", fill = NA, size = 1),
-      strip.background = element_rect(fill = "grey", color = "grey", size = 1)
-    ) +
-    
-    # Custom guides for the legend
-    guides(
-      fill = guide_legend(title = "Imputation Method"),
-      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
-      color = "none"
-    )
-  
-  return(plot)
+    return(plot)
 }
 
+
 # Example usage for CL
-CL_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "CL", "Clearance (CL)")
-png("CL_LogNormal_Distribution_with_Lognormal_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
+CL_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "CL", "CL")
+png("CL_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
 print(CL_Plot_fixed)
 dev.off()
 
+
+
+V_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "VC", "VC")
+png("V_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
+print(V_Plot_fixed)
+dev.off()
+
+KA_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "KA", "KA")
+png("KA_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
+print(KA_Plot_fixed)
+dev.off
 
 
