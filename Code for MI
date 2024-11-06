@@ -1810,7 +1810,7 @@ PPI_Plot <- ggplot(concordance_summary_PPI_pct, aes(x = Missing_Values, y = Perc
        y = "Frequency (%) of TRUE/FALSE Concordance",
        fill = "Concordance (PPI)") +
   scale_fill_jco() +
-  theme_minimal(base_size = 14) +
+  my_theme +
   scale_x_discrete(drop = FALSE) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
@@ -1832,7 +1832,7 @@ UM_Plot <- ggplot(concordance_summary_UM_pct, aes(x = Missing_Values, y = Percen
        y = "Frequency (%) of TRUE/FALSE Concordance",
        fill = "Concordance (UM)") +
   scale_fill_jco() +
-  theme_minimal(base_size = 14) +
+  my_theme +
   scale_x_discrete(drop = FALSE) +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
@@ -2849,7 +2849,7 @@ for (i in seq_along(mlxtran_files)) {
   
   # Add consistent x and y axis limits, title, and custom theme to the plot
   vpc_plot <- vpc_plot +
-    ggtitle(paste("pcVPC of", project_info$project_name, "with", project_info$na_percentage)) +
+    ggtitle(paste(project_info$project_name, "with", project_info$na_percentage)) +
     xlim(x_limits) +
     ylim(y_limits) +
     my_theme
@@ -2858,15 +2858,25 @@ for (i in seq_along(mlxtran_files)) {
   vpc_plots[[i]] <- vpc_plot
 }
 
-# Combine all the plots into one using ggarrange, with a shared legend
-combined_plot <- ggarrange(plotlist = vpc_plots, 
-                           ncol = 3,  # 3 plots per row
-                           nrow = ceiling(length(vpc_plots) / 3),  # Adjust rows based on the number of plots
-                           common.legend = TRUE,                   # Use the same legend
-                           legend = "bottom")                      # Place the legend at the bottom
 
-# Save the combined plot as a PNG
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 18, units = 'in', res = 900)
+
+
+plot_indices <- c(
+  5, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+  5, 10, 11, 12, 13, 5, 14, 15,
+  16, 17, 5, 18, 19, 20, 11
+)
+
+combined_plot <- ggarrange(
+  plotlist = vpc_plots[plot_indices],
+  ncol = 5,
+  nrow = 5,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC2.png", width = 12, height = 12, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
@@ -3015,7 +3025,7 @@ plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, vari
              x = variable_name,
              y = "Count") +
         # Custom theme with spacing and legend
-        theme_minimal() +
+        my_theme +
         theme(
             plot.title = element_text(hjust = 0.5, face = "bold"),
             axis.title = element_text(size = 16),
@@ -3350,3 +3360,201 @@ for (param in parameters) {
   dev.off()
 }
 
+
+
+
+
+
+
+
+
+
+
+# Define the desired order of imputation methods
+imputation_methods <- c("Amelia", "MF", "MICE", "MIDAS", "XGB")
+
+# Define the missing data percentages
+missing_percentages <- c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")
+
+# Initialize a list to store the data frames
+predictions_list <- list()
+
+# Process the final_data
+final_predictions <- all_data[["final_data"]][["predictions"]]
+
+# Check if 'final_predictions' exists and has the required columns
+if (!is.null(final_predictions) && all(c("DV", "popPred", "indivPred_mode") %in% names(final_predictions))) {
+  
+  # Assign Missing_Percentage as "0% NA"
+  final_predictions <- final_predictions %>%
+    mutate(
+      Missing_Percentage = factor("0% NA", levels = missing_percentages)
+    )
+  
+  # For each imputation method, create a copy of final_predictions
+  for (method in imputation_methods) {
+    method_predictions <- final_predictions %>%
+      mutate(
+        Imputation_Method = factor(method, levels = imputation_methods)
+      )
+    
+    # Store in the list with a key combining method and percentage
+    key <- paste(method, "0% NA", sep = "_")
+    predictions_list[[key]] <- method_predictions
+  }
+}
+
+# Get the names of the datasets (excluding 'final_data')
+dataset_names <- setdiff(names(all_data), "final_data")
+
+# Process each imputed dataset
+for (dataset_name in dataset_names) {
+  
+  # Extract the dataset
+  dataset <- all_data[[dataset_name]]
+  
+  # Extract the 'predictions' data frame
+  predictions_df <- dataset[["predictions"]]
+  
+  # Check if 'predictions' data frame exists and has the required columns
+  if (!is.null(predictions_df) && all(c("DV", "popPred", "indivPred_mode") %in% names(predictions_df))) {
+    
+    # Determine the Imputation_Method based on dataset name
+    if (grepl("^amelia", dataset_name, ignore.case = TRUE)) {
+      method <- "Amelia"
+    } else if (grepl("^MF", dataset_name, ignore.case = TRUE)) {
+      method <- "MF"
+    } else if (grepl("^mice", dataset_name, ignore.case = TRUE)) {
+      method <- "MICE"
+    } else if (grepl("^MIDAS", dataset_name, ignore.case = TRUE)) {
+      method <- "MIDAS"
+    } else if (grepl("^XGB", dataset_name, ignore.case = TRUE)) {
+      method <- "XGB"
+    } else {
+      stop(paste("Unknown method in dataset name:", dataset_name))
+    }
+    
+    # Extract the missing percentage from the dataset name
+    if (grepl("_1$", dataset_name)) {
+      percentage <- "5% NA"
+    } else if (grepl("_2$", dataset_name)) {
+      percentage <- "20% NA"
+    } else if (grepl("_3$", dataset_name)) {
+      percentage <- "50% NA"
+    } else if (grepl("_4$", dataset_name)) {
+      percentage <- "75% NA"
+    } else {
+      stop(paste("Could not determine Missing_Percentage for dataset:", dataset_name))
+    }
+    
+    # Assign Missing_Percentage and Imputation_Method
+    predictions_df <- predictions_df %>%
+      mutate(
+        Missing_Percentage = factor(percentage, levels = missing_percentages),
+        Imputation_Method = factor(method, levels = imputation_methods)
+      )
+    
+    # Store in the list with a key combining method and missing percentage
+    key <- paste(method, percentage, sep = "_")
+    predictions_list[[key]] <- predictions_df
+  } else {
+    warning(paste("Dataset", dataset_name, "does not have the required columns for plotting."))
+  }
+}
+
+# Combine all predictions into one data frame
+all_predictions <- bind_rows(predictions_list, .id = "Dataset")
+
+# Reshape the data to long format for plotting
+all_predictions_long <- all_predictions %>%
+  select(id, time, DV, popPred, indivPred_mode, Imputation_Method, Missing_Percentage) %>%
+  pivot_longer(
+    cols = c(popPred, indivPred_mode),
+    names_to = "Prediction_Type",
+    values_to = "Predicted_Value"
+  ) %>%
+  mutate(
+    Prediction_Type = factor(
+      Prediction_Type,
+      levels = c("popPred", "indivPred_mode"),
+      labels = c("Population Predictions", "Individual Predictions")
+    ),
+    Imputation_Method = factor(Imputation_Method, levels = imputation_methods),
+    Missing_Percentage = factor(Missing_Percentage, levels = missing_percentages)
+  )
+
+# Split data into Population and Individual Predictions
+population_data <- all_predictions_long %>%
+  filter(Prediction_Type == "Population Predictions")
+
+individual_data <- all_predictions_long %>%
+  filter(Prediction_Type == "Individual Predictions")
+
+
+# Create Population Predictions plot
+population_plot <- ggplot(population_data, aes(x = Predicted_Value, y = DV)) +
+  geom_point(alpha = 0.6, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free") +
+  labs(
+    title = "Observations vs. Population Predictions",
+    x = "Predicted Values",
+    y = "Observed Values (DV)"
+  ) +
+  my_theme + 
+    theme(
+      strip.background = element_rect(fill = "grey90", color = "grey50"),
+      strip.text = element_text(face = "bold", color = "black"),
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing.y = unit(1, "cm"),
+      panel.border = element_rect(
+        colour = "black",
+        fill = NA,
+        size = 0.5
+      ))
+
+# Create Individual Predictions plot
+individual_plot <- ggplot(individual_data, aes(x = Predicted_Value, y = DV)) +
+  geom_point(alpha = 0.6, size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+  facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free") +
+  labs(
+    title = "Observations vs. Individual Predictions",
+    x = "Predicted Values",
+    y = "Observed Values (DV)"
+  ) +
+  my_theme + 
+    theme(
+      strip.background = element_rect(fill = "grey90", color = "grey50"),
+      strip.text = element_text(face = "bold", color = "black"),
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing.y = unit(1, "cm"),
+      panel.border = element_rect(
+        colour = "black",
+        fill = NA,
+        size = 0.5
+      ))
+
+# Arrange the two plots side by side using ggarrange
+combined_plot <- ggarrange(
+  population_plot,
+  individual_plot,
+  ncol = 2,
+  labels = c("A", "B"),
+  align = "hv"
+)
+
+# Add an overall title (optional)
+combined_plot <- annotate_figure(
+  combined_plot,
+  top = text_grob("Observations vs. Predictions Across Imputation Methods and Missing Data Percentages", 
+                 face = "bold", size = 18)
+)
+
+
+# Save the combined plot as a PNG
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/ObsPred.png", width = 18, height = 12, units = 'in', res = 900)
+print(combined_plot)
+dev.off()
