@@ -7,6 +7,8 @@ library(missForest)
 library(rMIDAS)
 library(dplyr)
 library(mice)
+library(FactoMineR)
+library(ggcorrplot)
 library(tidyr)
 library(ggsci)
 library(ggpubr)
@@ -1424,12 +1426,6 @@ XGB_combined_data <- cbind(
 # View the combined dataframe
 XGB_combined_data
 
-# Load necessary libraries
-library(ggplot2)
-library(ggcorrplot)
-library(ggpubr)
-library(dplyr)
-
 # Define the columns of interest
 columns_of_interest <- c("Height", "WT", "Alb", "CrCl", "Age", "PPI", "UM")
 
@@ -1546,17 +1542,20 @@ for (i in seq_along(all_datasets)) {
   plot_list[[i]] <- p
 }
 
+
+
+
 # Arrange plots using ggarrange
 # Since we now have 21 datasets, we'll arrange them in 7 columns and 3 rows
 combined_plot <- ggarrange(
   plotlist = plot_list,
-  ncol = 7, nrow = 3,
+  ncol = 5, nrow = 5,
   labels = NULL
 )
 
 # Save the combined plot to a PNG file using png() and dev.off()
 # Set the output image size and resolution
-png("Correlation plot.png", width = 24, height = 9, units = 'in', res = 900)
+png("Correlation plot.png", width = 16, height = 16, units = 'in', res = 900)
 
 # Draw the combined plot
 print(combined_plot)
@@ -1630,9 +1629,7 @@ frobenius_results <- frobenius_results %>% arrange(Frobenius_Norm)
 print(frobenius_results)
 
 
-# Install the package if not already installed
-if (!require("FactoMineR")) install.packages("FactoMineR")
-library(FactoMineR)
+
 
 # Initialize a data frame to store the results
 rv_results <- data.frame(
