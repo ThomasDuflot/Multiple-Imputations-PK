@@ -1,3 +1,5 @@
+library(lixoftConnectors)
+initializeLixoftConnectors(software = "monolix")
 library(mrgsolve)
 library(PopED)
 library(MASS) 
@@ -18,14 +20,13 @@ library(caret)
 library(PFIM)
 library(magick)
 library(VIM)
-library(stringer)
+library(stringr)
 library(ggh4x)
-library(lixoftConnectors)
-initializeLixoftConnectors(software = "monolix")
 library(purrr)
+library(flextable)
+library(officer)
 
-
-
+set.seed(123)
 # Define the means and standard deviations for each parameter
 Height <- 170  # cm
 Height_sd <- 10
@@ -2052,8 +2053,6 @@ for (i in seq_along(merged_imputed_data_list)) {
 print("Merged imputed dataframes have been successfully exported into 'imputed_datasets_merged'.")
 
 
-# Load necessary libraries
-library(dplyr)
 
 # Rename percentages for missing data
 percentages <- c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")
@@ -2760,9 +2759,7 @@ correlation_combined
 
 
 
-# Load required packages
-library(flextable)
-library(officer)
+
 
 # Create the flextable from the reordered dataframe
 flextable_table <- flextable(correlation_combined)
@@ -2888,7 +2885,17 @@ print(combined_plot)
 dev.off()
 
 
+directory_path <- "D:/MOBILITE/1er papier - Simulation Covariables/imputed_datasets_merged"
+# Get full paths of all CSV files in the directory
+csv_files <- list.files(path = directory_path, pattern = "\\.csv$", full.names = TRUE)
+# Read all CSV files into a list
+merged_imputed_data_list <- lapply(csv_files, read.csv)
+# Extract file names without directory and extension
+file_names <- basename(csv_files)
+file_names <- tools::file_path_sans_ext(file_names)
 
+# Assign names to the list elements
+names(merged_imputed_data_list) <- file_names
 
 
 mrgsolv_val <- merged_imputed_data_list$final_data %>%
@@ -2951,9 +2958,7 @@ combined_mlx_val <- combined_mlx_val %>%
 
 
 plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, variable_name) {
-    library(dplyr)
-    library(ggplot2)
-    library(ggsci)
+
     
     # Set binwidth based on the variable
     binwidth_value <- if (variable == "CL") 0.2 else if (variable == "VC") 1 else 0.1
@@ -3565,3 +3570,138 @@ combined_plot <- annotate_figure(
 png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/ObsPred.png", width = 18, height = 12, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
+
+
+# Compute statistics for population_data
+population_stats <- population_data %>%
+  group_by(Imputation_Method, Missing_Percentage) %>%
+  summarise(
+    MAE = mean(abs(DV - Predicted_Value), na.rm = TRUE),
+    MPE = mean(((DV - Predicted_Value) / DV) * 100, na.rm = TRUE),
+    RMSE = sqrt(mean((DV - Predicted_Value)^2, na.rm = TRUE)),
+    RMSE_percent = (RMSE / mean(DV, na.rm = TRUE)) * 100,
+    R_squared = cor(DV, Predicted_Value, use = "complete.obs")^2
+  ) %>%
+  ungroup()
+
+
+# Compute statistics for individual_data
+individual_stats <- individual_data %>%
+  group_by(Imputation_Method, Missing_Percentage) %>%
+  summarise(
+    MAE = mean(abs(DV - Predicted_Value), na.rm = TRUE),
+    MPE = mean(((DV - Predicted_Value) / DV) * 100, na.rm = TRUE),
+    RMSE = sqrt(mean((DV - Predicted_Value)^2, na.rm = TRUE)),
+    RMSE_percent = (RMSE / mean(DV, na.rm = TRUE)) * 100,
+    R_squared = cor(DV, Predicted_Value, use = "complete.obs")^2
+  ) %>%
+  ungroup()
+
+
+
+# Round the statistics for population_data
+population_stats <- population_stats %>%
+  mutate(
+    MAE = round(MAE, 4),
+    MPE = round(MPE, 2),
+    RMSE = round(RMSE, 4),
+    RMSE_percent = round(RMSE_percent, 2),
+    R_squared = round(R_squared, 4)
+  )
+
+# Round the statistics for individual_data
+individual_stats <- individual_stats %>%
+  mutate(
+    MAE = round(MAE, 4),
+    MPE = round(MPE, 2),
+    RMSE = round(RMSE, 4),
+    RMSE_percent = round(RMSE_percent, 2),
+    R_squared = round(R_squared, 4)
+  )
+
+# Add Prediction_Type to each data frame
+population_stats <- population_stats %>%
+  mutate(Prediction_Type = "Population")
+
+individual_stats <- individual_stats %>%
+  mutate(Prediction_Type = "Individual")
+
+# Combine the statistics
+combined_stats <- bind_rows(population_stats, individual_stats)
+
+# Arrange columns in desired order
+combined_stats <- combined_stats %>%
+  select(Imputation_Method, Missing_Percentage, Prediction_Type,
+         MAE, MPE, RMSE, RMSE_percent, R_squared)
+
+# View combined statistics
+print(combined_stats)
+
+
+flextable_table <- flextable(combined_stats)
+
+# Merge vertically where values are the same for Prediction_Type, Missing_Percentage, and Imputation_Method
+flextable_table <- flextable_table %>%
+  merge_v(j = c("Missing_Percentage", "Imputation_Method"))
+  merge_h(j = c("Prediction_Type"))
+
+# Apply a simple box theme to the table
+flextable_table <- flextable_table %>%
+  theme_box()
+
+# Set custom header labels for better readability
+flextable_table <- flextable_table %>%
+  set_header_labels(
+    Imputation_Method = "Imputation Method",
+    Missing_Percentage = "Missing Percentage",
+    Prediction_Type = "Prediction Type",
+    MAE = "MAE",
+    MPE = "MPE",
+    RMSE = "RMSE",
+    RMSE_percent = "RMSE%",
+    R_squared = "R²"
+  )
+
+# Set font size to 10 and font to Times New Roman for all parts of the table
+flextable_table <- flextable_table %>%
+  fontsize(size = 10, part = "all") %>%
+  font(part = "all", fontname = "Times New Roman")
+
+# Make the headers bold
+flextable_table <- flextable_table %>%
+  bold(part = "header")
+
+# Center-align all text in the table
+flextable_table <- flextable_table %>%
+  align(align = "center", part = "all")
+
+# Set custom column widths for better readability
+flextable_table <- flextable_table %>%
+  width(j = c("Prediction_Type"), width = 2) %>%
+  width(j = c("Imputation_Method", "Missing_Percentage"), width = 1.5) %>%
+  width(j = c("MAE", "MPE", "RMSE", "RMSE_percent", "R_squared"), width = 1)
+
+# Set inner horizontal borders
+flextable_table <- flextable_table %>%
+  border_inner_h(border = fp_border(color = "gray", width = 1))
+
+# Set outer borders
+flextable_table <- flextable_table %>%
+  border_outer(border = fp_border(color = "black", width = 1.5))
+
+# Add padding for better readability
+flextable_table <- flextable_table %>%
+  padding(padding = 5, part = "all")
+
+# Add a custom footer line
+flextable_table <- flextable_table %>%
+  add_footer_lines(values = "This table summarizes the statistical metrics for each combination of Prediction Type, Imputation Method, and Missing Percentage.")
+
+# Create a new Word document
+doc <- read_docx()
+
+# Add the flextable to the Word document
+doc <- body_add_flextable(doc, value = flextable_table)
+
+# Save the Word document to a file
+print(doc, target = "Statistical_Metrics_Table.docx")
