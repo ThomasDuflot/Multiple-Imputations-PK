@@ -23,6 +23,63 @@ initializeLixoftConnectors(software = "monolix")
 library(purrr)
 
 
+
+# Define the means and standard deviations for each parameter
+Height <- 170  # cm
+Height_sd <- 10
+
+WT <- 70  # kg
+WT_sd <- 15
+
+Alb <- 42  # g/L
+Alb_sd <- 4
+
+CrCl <- 90  # mL/min/1.73m2
+CrCl_sd <- 15
+
+Age <- 50  # years
+Age_sd <- 15
+
+# Correlation matrix between parameters
+# Adding Age with hypothetical correlations to Weight, Albumin, and Renal Function
+cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
+                       0.7, 1, 0, 0, 0.3,   # WT
+                       0, 0, 1, 0.5, -0.2,  # Alb
+                       0, 0, 0.5, 1, -0.4,  # CrCl
+                       0.2, 0.3, -0.2, -0.4, 1), # Age
+                     nrow=5, byrow=TRUE)
+
+# Parameter means in the same order as the correlation matrix
+means <- c(Height, WT, Alb, CrCl, Age)
+
+# Standard deviations of the parameters
+sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
+
+# Calculate the covariance matrix from the correlation matrix and standard deviations
+cov_matrix <- cor_matrix * (sds %*% t(sds))
+
+# Generate 100 patients with correlated distributions
+set.seed(123)  # For reproducibility
+sim_data <- mvrnorm(n = 100, mu = means, Sigma = cov_matrix)
+
+# Convert to a dataframe and rename columns
+sim_data <- as.data.frame(sim_data)
+colnames(sim_data) <- c("Height", "WT", "Alb", "CrCl", "Age")
+
+# Display a preview of the simulated data
+head(sim_data)
+
+# Add binary variables for PPI and UM
+sim_data$PPI <- rbinom(n = 100, size = 1, prob = 0.5)
+sim_data$UM <- rbinom(n = 100, size = 1, prob = 0.5)
+sim_data$ID <- 1:100
+
+# Optional: Check correlations in the simulated data
+cor(sim_data)
+
+
+
+
 modelEquations = list(
 
   outcomes = list( "RespPK"),
@@ -145,10 +202,6 @@ my_theme <- theme_minimal(base_size = 16) +
 
 
 
-
-
-setwd("D:/MOBILITE/1er papier - Simulation Covariables/Figures")
-
 # Define the PK model
 code <- '
 $PROB
@@ -201,60 +254,6 @@ mod <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
 
 
 
-# Définir les moyennes et écarts-types pour chaque paramètre
-Height <- 170  # cm
-Height_sd <- 10
-
-WT <- 70  # kg
-WT_sd <- 15
-
-Alb <- 42  # g/L
-Alb_sd <- 4
-
-CrCl <- 90  # mL/min/1.73m2
-CrCl_sd <- 15
-
-Age <- 50  # ans
-Age_sd <- 15
-
-# Matrice de corrélation entre les paramètres
-# Ajout de l'Age avec des corrélations hypothétiques avec Poids, Albumine et Fonction rénale
-cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
-                       0.7, 1, 0, 0, 0.3,   # WT
-                       0, 0, 1, 0.5, -0.2,  # ALB
-                       0, 0, 0.5, 1, -0.4,  # CrCl
-                       0.2, 0.3, -0.2, -0.4, 1), # Age
-                     nrow=5, byrow=TRUE)
-
-# Moyennes des paramètres dans le même ordre que la matrice de corrélation
-moyennes <- c(Height, WT, Alb, CrCl, Age)
-
-# Écarts-types des paramètres
-sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
-
-# Calcul de la matrice de covariance à partir de la matrice de corrélation et des écarts-types
-cov_matrix <- cor_matrix * (sds %*% t(sds))
-
-# Générer 100 patients avec les distributions corrélées
-set.seed(123)  # Pour la reproductibilité
-sim_data <- mvrnorm(n = 100, mu = moyennes, Sigma = cov_matrix)
-
-# Convertir en dataframe et renommer les colonnes
-sim_data <- as.data.frame(sim_data)
-colnames(sim_data) <- c("Height", "WT", "Alb", "CrCl", "Age")
-
-# Afficher un aperçu des données simulées
-head(sim_data)
-
-sim_data$PPI <- rbinom(n = 100, size = 1, prob = 0.5)
-sim_data$UM <- rbinom(n = 100, size = 1, prob = 0.5)
-sim_data$ID <- 1:100
-
-# Optionnel : vérifier les corrélations dans les données simulées
-cor(sim_data)
-
-
-
 
 
 ff <- function(model_switch, xt, p, poped.db){
@@ -294,7 +293,8 @@ sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
                TAU =a[2],
                WT  =a[3],
                CrCl =a[4],
-               PPI  =a[5])
+               PPI  =a[5],
+               UM = a[6])
   return(parameters) 
 }
 
@@ -405,7 +405,15 @@ out <-
   mrgsim(delta=0.05, end=40, obsonly=TRUE)
 
 out
+
+png("mrgsolve output.png", width = 24, height = 9, units = 'in', res = 900)
+
 plot(out)
+
+# Close the graphics device
+dev.off()
+
+
 
 
 # Define the time sequence (from 0 to 40 by 0.05)
@@ -444,14 +452,14 @@ merged_data <- merge(expanded_sim_data, as.data.frame(out), by = c("ID", "time")
 head(merged_data)
 
 
-# Filter merged_data to keep only rows where 'time' is 0,0.25, 0.5, 4, 6, 8, or 40
-filtered_data <- merged_data[merged_data$time %in% c(0, 0.25,0.5, 4, 6, 8,16,24,32,36, 40), ]
+# Filter merged_data to keep only rows where 'time' is (0, 0.25,0.5, 4, 8,16,24,32,36 or 40
+filtered_data <- merged_data[merged_data$time %in% c(0, 0.25,0.5, 4, 8,16,24,32,36, 40), ]
 
 # Check the filtered data
 head(filtered_data)
 
-# Step 1: Identify rows to duplicate (time is 8 or 40, amt == 100, evid == 1)
-rows_to_duplicate <- filtered_data[filtered_data$time %in% c(8, 40) & filtered_data$amt == 100 & filtered_data$evid == 1, ]
+# Step 1: Identify rows to duplicate (time is  40, amt == 100, evid == 1)
+rows_to_duplicate <- filtered_data[filtered_data$time %in% c( 40) & filtered_data$amt == 100 & filtered_data$evid == 1, ]
 
 
 # Step 2: Duplicate the rows
