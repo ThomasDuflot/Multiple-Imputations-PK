@@ -286,12 +286,13 @@ ff <- function(model_switch, xt, p, poped.db){
 
 
 sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
-  parameters=c(TVCL=bpop[1]*exp(b[1])*exp(bpop[7]),
+  parameters=c(TVCL=bpop[1]*exp(b[1]),
                TVVC=bpop[2]*exp(b[2]),
                TVKA=bpop[3]*exp(b[3]),
                WT_VC=bpop[4],
                CrCl_CL=bpop[5],
                PPI_KA=bpop[6],
+               UM_CL=bpop[7],
                DOSE=a[1],
                TAU =a[2],
                WT  =a[3],
@@ -319,7 +320,7 @@ poped.cov_mrg_poped <- create.poped.database(
   fError_fun=feps,
   bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
   d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
-  notfixed_bpop=c(1,1,1,0,0,0,0),
+  notfixed_bpop=c(1,1,1,1,1,1,1),
   sigma=c(prop=0.15^2,add=0.1^2),
   notfixed_sigma=c(1,1),
   m=100,
@@ -332,7 +333,7 @@ poped.cov_mrg_poped <- create.poped.database(
 )
 
 plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
-ev<-evaluate_design(poped.cov_mrg_poped)
+ev<-evaluate_design(fim.calc.type=4,poped.cov_mrg_poped)
 ev
 shrinkage(poped.cov_mrg_poped)
 
