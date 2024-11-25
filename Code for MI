@@ -627,6 +627,35 @@ for (i in 1:length(missing_data_list)) {
   }
 }
 
+# Set your working directory to the folder containing the files
+setwd("D:/MOBILITE/1er papier - Simulation Covariables/imputed_datasets_merged")
+
+# Read the 'final_data' file into a dataframe
+final_data <- read.csv("final_data.csv")  # Adjust the file extension if necessary
+
+# Function to read files with a specific prefix into a list
+read_imputed_data <- function(prefix) {
+  # List all files that match the prefix and have an underscore followed by a number
+  files <- list.files(pattern = paste0("^", prefix, "_\\d+\\.csv$"))
+  
+  # Sort the files to ensure they are in the correct order
+  files <- sort(files)
+  
+  # Read each file and store it in a list
+  data_list <- lapply(files, read.csv)
+  
+  # Optionally, name the list elements for easier reference
+  names(data_list) <- paste0(prefix, "_", 1:length(data_list))
+  
+  return(data_list)
+}
+
+# Read the files for each method into separate lists
+Amelia_imputed_data_list <- read_imputed_data("amelia")
+MF_imputed_data_list     <- read_imputed_data("MF")
+mice_imputed_data_list   <- read_imputed_data("mice")
+MIDAS_imputed_data_list  <- read_imputed_data("MIDAS")
+XGB_imputed_data_list    <- read_imputed_data("XGB")
 
 
 
@@ -1471,7 +1500,7 @@ all_datasets <- list(
 
 # Assign names to datasets
 dataset_names <- c(
-  "Final Data",
+  "Original Data",
   
   # MICE datasets with missing percentages
   paste0("MICE ", missing_percentages),
@@ -1546,18 +1575,27 @@ for (i in seq_along(all_datasets)) {
 
 
 
+plot_indices <- c(
+  1, 2, 3, 4, 5,1, 6, 7, 8, 9,
+  1, 10, 11, 12, 13, 1, 14, 15,
+  16, 17, 1, 18, 19, 20, 21
+)
+
 
 # Arrange plots using ggarrange
 # Since we now have 21 datasets, we'll arrange them in 7 columns and 3 rows
 combined_plot <- ggarrange(
-  plotlist = plot_list,
+  plotlist = plot_list[plot_indices],
   ncol = 5, nrow = 5,
   labels = NULL
 )
 
+
+
+
 # Save the combined plot to a PNG file using png() and dev.off()
 # Set the output image size and resolution
-png("Correlation plot.png", width = 16, height = 16, units = 'in', res = 900)
+png("Correlation plot.png", width = 16, height = 12, units = 'in', res = 900)
 
 # Draw the combined plot
 print(combined_plot)
