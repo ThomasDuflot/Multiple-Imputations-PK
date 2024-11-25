@@ -573,6 +573,13 @@ image_write(combined_img, path = "Combined_Missing_Data_Final.png")
 
 
 
+# Read the files for each method into separate lists
+Amelia_imputed_data_list <- read_imputed_data("amelia")
+MF_imputed_data_list     <- read_imputed_data("MF")
+mice_imputed_data_list   <- read_imputed_data("mice")
+MIDAS_imputed_data_list  <- read_imputed_data("MIDAS")
+XGB_imputed_data_list    <- read_imputed_data("XGB")
+
 
 
 
@@ -650,12 +657,7 @@ read_imputed_data <- function(prefix) {
   return(data_list)
 }
 
-# Read the files for each method into separate lists
-Amelia_imputed_data_list <- read_imputed_data("amelia")
-MF_imputed_data_list     <- read_imputed_data("MF")
-mice_imputed_data_list   <- read_imputed_data("mice")
-MIDAS_imputed_data_list  <- read_imputed_data("MIDAS")
-XGB_imputed_data_list    <- read_imputed_data("XGB")
+
 
 
 
@@ -1595,7 +1597,7 @@ combined_plot <- ggarrange(
 
 # Save the combined plot to a PNG file using png() and dev.off()
 # Set the output image size and resolution
-png("Correlation plot.png", width = 16, height = 12, units = 'in', res = 900)
+png("Correlation plot.png", width = 20, height = 16, units = 'in', res = 900)
 
 # Draw the combined plot
 print(combined_plot)
@@ -1635,7 +1637,7 @@ names(corr_matrices) <- dataset_names
 
 
 # Extract the original correlation matrix
-corr_original <- corr_matrices[["Final Data"]]
+corr_original <- corr_matrices[["Original Data"]]
 
 # Initialize a data frame to store the results
 frobenius_results <- data.frame(
@@ -1764,23 +1766,92 @@ combined_data <- bind_rows(
   XGB_combined_data %>% mutate(Imputation_Method = "XGB"),
 )
 
+
+
+# Compute summary statistics
+summary_stats <- combined_data %>%
+  group_by(Missing_Values, Imputation_Method) %>%
+  summarise(
+    # Absolute Error with Standard Deviation
+    AE_WT = sprintf("%.2f ± %.2f", mean(AE_WT, na.rm = TRUE), sd(AE_WT, na.rm = TRUE)),
+    AE_CrCl = sprintf("%.2f ± %.2f", mean(AE_CrCl, na.rm = TRUE), sd(AE_CrCl, na.rm = TRUE)),
+    
+    # Percentage Error with Standard Deviation
+    PE_WT = sprintf("%.2f ± %.2f", mean(PE_WT, na.rm = TRUE), sd(PE_WT, na.rm = TRUE)),
+    PE_CrCl = sprintf("%.2f ± %.2f", mean(PE_CrCl, na.rm = TRUE), sd(PE_CrCl, na.rm = TRUE)),
+    
+    # Percentage of Concordance
+    Concordance_PPI = sprintf("%.2f%%", mean(PPI, na.rm = TRUE) * 100),
+    Concordance_UM = sprintf("%.2f%%", mean(UM, na.rm = TRUE) * 100)
+  ) %>%
+  ungroup()
+
+# Ensure Missing_Values is ordered correctly and Imputation_Method sorted alphabetically
+summary_stats <- summary_stats %>%
+  mutate(
+    Missing_Values = factor(
+      Missing_Values,
+      levels = c("5%", "20%", "50%", "75%")  # Ensure Missing_Values order
+    ),
+    Imputation_Method = factor(Imputation_Method, levels = sort(unique(Imputation_Method)))  # Alphabetical order
+  ) %>%
+  arrange(Missing_Values, Imputation_Method)  # Sort by Missing_Values and then Imputation_Method
+
+
+
+# Create the flextable
+ft <- flextable(summary_stats) %>%
+  theme_box() %>%
+  set_header_labels(
+    Missing_Values = "Missing Percentage",
+    Imputation_Method = "Imputation Method",
+    AE_WT = "AE (WT) [Mean ± SD]",
+    PE_WT = "PE (WT) [Mean ± SD]",
+    AE_CrCl = "AE (CrCl) [Mean ± SD]",
+    PE_CrCl = "PE (CrCl) [Mean ± SD]",
+    Concordance_PPI = "% Concordance (PPI)",
+    Concordance_UM = "% Concordance (UM)"
+  ) %>%
+  merge_v(j = c("Missing_Values", "Imputation_Method")) %>%  # Merge rows first by Missing_Values, then Imputation_Method
+  fontsize(size = 10, part = "all") %>%
+  font(part = "all", fontname = "Times New Roman") %>%
+  bold(part = "header") %>%
+  align(align = "center", part = "all") %>%
+  width(j = c("Missing_Values", "Imputation_Method"), width = 1.5) %>%
+  width(j = c("AE_WT", "PE_WT", "AE_CrCl", "PE_CrCl", "Concordance_PPI", "Concordance_UM"), width = 1.8)
+
+
+# Create a Word document and add the flextable
+doc <- read_docx() %>%
+  body_add_par("Summary of AE, PE (WT and CrCl), and Concordance (PPI and UM)", style = "heading 1") %>%
+  body_add_flextable(value = ft)
+
+# Save the document
+print(doc, target = "Summary_Statistics_with_Concordance.docx")
+
+
 # View the combined data frame
 print(combined_data)
-
-
 long_combined_data <- combined_data %>%
-  pivot_longer(cols = c(AE_WT, PE_WT, AE_CrCl, PE_CrCl), 
-               names_to = c("ErrorType", "Variable"), 
-               names_sep = "_") %>%
-  mutate(ErrorType = factor(ErrorType, levels = c("AE", "PE")))  # Set the order of ErrorType
-
+  pivot_longer(
+    cols = c(AE_WT, PE_WT, AE_CrCl, PE_CrCl), 
+    names_to = c("ErrorType", "Variable"), 
+    names_sep = "_"
+  ) %>%
+  mutate(
+    ErrorType = factor(
+      ErrorType, 
+      levels = c("AE", "PE"), 
+      labels = c("Absolute Error", "Percentage Error")  # New labels
+    )
+  )
 
 
 AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = Imputation_Method)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA, color = "black", linewidth = 1.2) +  # Thicker boxplot borders
   geom_point(color = "black", position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.75), alpha = 1, size = 0.6, show.legend = FALSE) +  # Black points without legend
   facet_grid(ErrorType ~ Variable, scales = "free_y") +  # Facet by ErrorType in rows and Variable in columns
-  labs(title = "Comparison of AE and PE for WT and CrCl by Percentage of Missing Data",
+  labs(title = "Comparison of Absolute and Percentage Error for WT and CrCl by Percentage of Missing Data",
        x = "Percentage of Missing Data",
        y = "Error Value",
        fill = "Imputation Method") +
@@ -2139,7 +2210,7 @@ combined_subset_data <- bind_rows(subsetted_data_list)
 str(combined_subset_data)
 
 # If you want to save the combined data:
-# write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
+write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
 
 
 
