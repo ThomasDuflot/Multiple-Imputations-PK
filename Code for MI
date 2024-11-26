@@ -1970,7 +1970,9 @@ print(UM_Plot)
 dev.off()
 
 
-
+png("PPI_UM_comparison.png", width = 12, height = 16, units = 'in', res = 900)
+ggarrange(print(PPI_Plot),print(UM_Plot),common.legend=TRUE,nrow=2,labels="AUTO")
+dev.off()
 
 
 
@@ -2322,6 +2324,23 @@ print(CrCl_Plot_fixed)
 dev.off()
 
 
+combined_plot <- ggarrange(
+  WT_Plot_fixed, 
+  CrCl_Plot_fixed,
+  nrow = 2,
+  common.legend = TRUE,  # Combine legends
+  labels = "AUTO"        # Add labels "A", "B", etc.
+)
+
+# Display the combined plot
+print(combined_plot)
+
+
+
+png("WT_CrCl_Distrib.png", width = 12, height = 16, units = 'in', res = 900)
+print(combined_plot)
+dev.off()
+
 OFVval <- read.csv2("D:/MOBILITE/1er papier - Simulation Covariables/OBJ/OBJ.csv")
 
 
@@ -2525,6 +2544,21 @@ final_shrinkage_long <- final_shrinkage_wide %>%
   )
 
 
+# Update the Base_Name for consistent capitalization
+final_shrinkage_long$Base_Name <- final_shrinkage_long$Base_Name %>%
+  dplyr::recode(
+    `amelia` = "Amelia",
+    `mice` = "Mice",
+    `midas` = "MIDAS",
+    `xgb` = "XGB",
+    `final_data` = "Original Data"  # Keep the name for Original Data consistent
+  )
+
+# Ensure Base_Name has the desired factor order for consistent coloring and labeling
+final_shrinkage_long$Base_Name <- factor(
+  final_shrinkage_long$Base_Name,
+  levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")
+)
 
 # Create separate plots for each Shrinkage_Type using barplots with conditional width adjustment
 plot_list <- list()
@@ -2541,9 +2575,10 @@ for (shrinkage_type in unique(final_shrinkage_long$Shrinkage_Type)) {
              aes(width = ifelse(Missing_Percentage == "0%", 0.14, 0.7))) +  # Adjust width for 0% bars
     facet_wrap(~ Parameter, scales = "free") +  # Facet by ka, V, Cl
     labs(title = paste("Shrinkage", shrinkage_type, "by Missing Percentage"),
+         fill = "Imputation Method",
          x = "Missing Percentage",
          y = "Shrinkage Value") +
-    scale_fill_jco() +  # Apply jco color palette
+    scale_fill_jco() +  # Use jco color palette for consistent coloring
     my_theme  # Apply your custom theme
   
   # Store the plot in the list
@@ -2559,86 +2594,35 @@ combined_plot <- ggarrange(
   legend = "right"            # Position the legend on the right
 )
 
+
+
+
+
+
+
 # Save the plot as a PNG file with specified dimensions and resolution
 png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Shrinkage_custom_adjusted.png", width = 16, height = 9, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
+# Compute the delta (difference) for each criterion and replace 0 with NA
+log_likelihood_long <- log_likelihood_long %>%
+  group_by(Criteria) %>%
+  mutate(Delta = Value - Value[Base_Name == "Original Data" & Missing_Percentage == "0%"],
+         Delta = ifelse(Delta == 0, NA, Delta))  # Replace 0 with NA
 
-
-# Define which criteria we're interested in (OFV and BICc)
-log_likelihood_criteria <- c("OFV", "BICc")
-
-# Prepare data for plotting
-log_likelihood_data <- list()
-
-# Extract the log likelihood data (OFV and BICc) from each subfolder
-for (subfolder in names(all_data)) {
-  if ("log_likelihood" %in% names(all_data[[subfolder]])) {
-    log_likelihood_df <- all_data[[subfolder]]$log_likelihood
-    
-    # Ensure that the log_likelihood data has the required criteria
-    if ("OFV" %in% log_likelihood_df$criteria && "BICc" %in% log_likelihood_df$criteria) {
-      # Extract Missing_Percentage from folder names
-      missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
-                                   ifelse(grepl("_1$", subfolder), "5%",
-                                          ifelse(grepl("_2$", subfolder), "20%",
-                                                 ifelse(grepl("_3$", subfolder), "50%", "75%"))))
-      
-      log_likelihood_values <- data.frame(
-        File = subfolder,
-        Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
-        Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
-        OFV = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "OFV"],
-        BICc = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "BICc"]
-      )
-      
-      log_likelihood_data[[subfolder]] <- log_likelihood_values
-    }
-  }
-}
-
-# Combine the data into one dataframe
-log_likelihood_combined <- do.call(rbind, log_likelihood_data)
-
-# Reorder the Missing_Percentage to start with 0%
-log_likelihood_combined$Missing_Percentage <- factor(
-  log_likelihood_combined$Missing_Percentage, 
-  levels = c("0%", "5%", "20%", "50%", "75%")
-)
-
-# Reshape the data to long format for plotting
-log_likelihood_long <- log_likelihood_combined %>%
-  pivot_longer(cols = c(OFV, BICc), names_to = "Criteria", values_to = "Value") %>%
-  filter(!is.na(Value))  # Remove rows with missing values
-
-# Set color levels for Base_Name with final_data appearing last
-base_name_levels <- c("amelia", "MF", "mice", "midas", "xgb", "final_data")
-log_likelihood_long$Base_Name <- factor(log_likelihood_long$Base_Name, levels = base_name_levels)
-
-# Get the jco color palette
+# Define the custom color mapping for each Base_Name
 jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
-
-# Define the custom color mapping for each Base_Name in the correct order
-custom_colors <- c("amelia" = jco_colors[1],
-                   "MF" = jco_colors[2],
-                   "mice" = jco_colors[3],
-                   "midas" = jco_colors[4],
-                   "xgb" = jco_colors[5],
-                   "final_data" = jco_colors[6])  # Make sure final_data is the last
-
-# Reorder the Base_Name levels to ensure final_data is last in the order
-log_likelihood_long$Base_Name <- factor(
-  log_likelihood_long$Base_Name, 
-  levels = c("amelia", "MF", "mice", "midas", "xgb", "final_data")  # Ensure final_data is last
+custom_colors <- c(
+  "Amelia" = jco_colors[1],
+  "MF" = jco_colors[2],
+  "Mice" = jco_colors[3],
+  "MIDAS" = jco_colors[4],
+  "XGB" = jco_colors[5],
+  "Original Data" = jco_colors[6]
 )
 
-# **Define final_data_values before the plotting loop**
-final_data_values <- log_likelihood_long %>%
-  filter(Base_Name == "final_data", Missing_Percentage == "0%") %>%
-  select(Criteria, Value)
-
-# Create separate plots for OFV and BICc with zoomed Y-axis (1450 to 1750)
+# Create separate plots for OFV and BICc
 plot_list <- list()
 
 for (criteria in log_likelihood_criteria) {
@@ -2646,28 +2630,38 @@ for (criteria in log_likelihood_criteria) {
   # Filter data for the current criteria
   plot_data <- log_likelihood_long %>% filter(Criteria == criteria)
   
-  # Separate the data for Missing_Percentage = 0% and the rest
+  # Separate data for Missing_Percentage == "0%" and the rest
   plot_data_0 <- plot_data %>% filter(Missing_Percentage == "0%")
   plot_data_rest <- plot_data %>% filter(Missing_Percentage != "0%")
   
-  # Get the final_data value for this criterion
-  final_value <- final_data_values %>% filter(Criteria == criteria) %>% pull(Value)
+  # Get the reference value for this criteria
+  final_value <- plot_data_0$Value[1]  # Reference value for 0%
   
-  # Create the plot using barplots with zoomed Y-axis (coord_cartesian)
+  # Adjust Y-axis limit based on criteria
+  ylim_max <- ifelse(criteria == "BICc", 1775, 1750)  # Increase BICc to 1775, OFV remains 1750
+  
+  # Create the plot with delta values displayed at the top of each bar
   p <- ggplot() +
     geom_col(data = plot_data_0, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
              position = position_dodge(width = 0.75), color = "black", width = 0.14) +  # Narrow bars for 0%
     geom_col(data = plot_data_rest, aes(x = Missing_Percentage, y = Value, fill = Base_Name), 
              position = position_dodge(width = 0.75), color = "black", width = 0.7) +  # Regular bars for the rest
-    geom_hline(yintercept = final_value, linetype = "dashed", color = "black", size = 1) +  # Add black horizontal line
-    coord_cartesian(ylim = c(1450, 1750)) +  # Zoom in on Y-axis from 1450 to 1750
-    labs(title = paste(criteria, "by Missing Percentage"),
-         x = "Missing Percentage",
-         y = criteria) +
-    scale_fill_manual(values = custom_colors, breaks = c("amelia", "MF", "mice", "midas", "xgb", "final_data")) +  # Set legend order manually
+    geom_text(
+      data = plot_data, 
+      aes(x = Missing_Percentage, y = Value, label = ifelse(is.na(Delta), "", sprintf("%.1f", Delta)), group = Base_Name), 
+      position = position_dodge(width = 0.75), vjust = -0.5, size = 3  # Adjust position and size of text
+    ) +
+    geom_hline(yintercept = final_value, linetype = "dashed", color = "black", size = 1) +  # Add horizontal line
+    coord_cartesian(ylim = c(1450, ylim_max)) +  # Adjust Y-axis limits
+    labs(
+      title = paste(criteria, "by Missing Percentage"),
+      x = "Missing Percentage",
+      y = criteria
+    ) +
+    scale_fill_manual(values = custom_colors, breaks = c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")) +  # Set legend order manually
     my_theme +  # Apply your custom theme
-    guides(fill = guide_legend(title = NULL))  # Remove the legend title
-
+    guides(fill = guide_legend(title = "Imputation Method"))  # Set legend title
+  
   # Store the plot in the list
   plot_list[[criteria]] <- p
 }
@@ -2682,7 +2676,8 @@ combined_log_likelihood_plot <- ggarrange(
 )
 
 # Save the plot as a PNG file with specified dimensions and resolution
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/LogLikelihood_OFV_BICc.png", width = 16, height = 9, units = 'in', res = 900)
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/LogLikelihood_OFV_BICc_Updated.png", 
+    width = 16, height = 9, units = 'in', res = 900)
 print(combined_log_likelihood_plot)
 dev.off()
 
@@ -2690,75 +2685,42 @@ dev.off()
 
 
 
-# Prepare data for plotting
-population_data_list <- list()
 
-# Extract the population parameters data from each subfolder
-for (subfolder in names(all_data)) {
-  if ("population_parameters" %in% names(all_data[[subfolder]])) {
-    population_df <- all_data[[subfolder]]$population_parameters
-    
-    # Extract Missing_Percentage from folder names
-    missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
-                                 ifelse(grepl("_1$", subfolder), "5%",
-                                        ifelse(grepl("_2$", subfolder), "20%",
-                                               ifelse(grepl("_3$", subfolder), "50%", "75%"))))
-    
-    population_values <- data.frame(
-      File = subfolder,
-      Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
-      Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
-      parameter = population_df$parameter,         # Population parameters
-      Value = population_df$value,                 # Corresponding values
-      P2.5 = population_df$P2.5_sa,                # 2.5th percentile
-      P97.5 = population_df$P97.5_sa               # 97.5th percentile
-    )
-    
-    # Apply exp() to specific parameters (beta_ka_PPI_1 and beta_Cl_UM_1) and their percentiles
-    population_values$Value <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
-                                      exp(population_values$Value),
-                                      population_values$Value)
-    
-    population_values$P2.5 <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
-                                     exp(population_values$P2.5),
-                                     population_values$P2.5)
-    
-    population_values$P97.5 <- ifelse(population_values$parameter %in% c("beta_ka_PPI_1", "beta_Cl_UM_1"),
-                                      exp(population_values$P97.5),
-                                      population_values$P97.5)
-    
-    population_data_list[[subfolder]] <- population_values
-  }
-}
 
-# Combine the data into one dataframe
-population_param_combined <- do.call(rbind, population_data_list)
 
-# Reorder the Missing_Percentage to start with 0%
-population_param_combined$Missing_Percentage <- factor(
-  population_param_combined$Missing_Percentage, 
-  levels = c("0%", "5%", "20%", "50%", "75%")
+
+
+
+
+
+
+
+# Rename Base_Name for consistent capitalization
+population_param_combined$Base_Name <- population_param_combined$Base_Name %>%
+  dplyr::recode(
+    `amelia` = "Amelia",
+    `MF` = "MF",
+    `mice` = "Mice",
+    `midas` = "MIDAS",
+    `xgb` = "XGB",
+    `final_data` = "Original Data"
+  )
+
+# Ensure Base_Name has the desired factor order for consistent coloring and labeling
+population_param_combined$Base_Name <- factor(
+  population_param_combined$Base_Name,
+  levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")
 )
 
-# Set color levels for Base_Name with final_data appearing last
-base_name_levels <- c("amelia", "MF", "mice", "midas", "xgb", "final_data")
-population_param_combined$Base_Name <- factor(population_param_combined$Base_Name, levels = base_name_levels)
-
-# Get the jco color palette
+# Define the custom color mapping for each Base_Name
 jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
-
-# Define the custom color mapping for each Base_Name in the correct order
-custom_colors <- c("amelia" = jco_colors[1],
-                   "MF" = jco_colors[2],
-                   "mice" = jco_colors[3],
-                   "midas" = jco_colors[4],
-                   "xgb" = jco_colors[5],
-                   "final_data" = jco_colors[6])  # Make sure final_data is the last
-
-# Reorder the Base_Name levels to ensure final_data is last in the order
-population_param_combined$Base_Name <- factor(
-  population_param_combined$Base_Name, 
-  levels = c("amelia", "MF", "mice", "midas", "xgb", "final_data")  # Ensure final_data is last
+custom_colors <- c(
+  "Amelia" = jco_colors[1],
+  "MF" = jco_colors[2],
+  "Mice" = jco_colors[3],
+  "MIDAS" = jco_colors[4],
+  "XGB" = jco_colors[5],
+  "Original Data" = jco_colors[6]
 )
 
 # Create plots for each population parameter
@@ -2775,7 +2737,7 @@ for (param in unique(population_param_combined$parameter)) {
   plot_data_rest <- plot_data %>% filter(Missing_Percentage != "0%")
   
   # Get the final_data value for this parameter
-  final_value <- plot_data %>% filter(Base_Name == "final_data") %>% pull(Value) %>% mean(na.rm = TRUE)
+  final_value <- plot_data %>% filter(Base_Name == "Original Data") %>% pull(Value) %>% mean(na.rm = TRUE)
   
   # Create the plot using barplots with regular and narrow bar widths and error bars for percentiles
   p <- ggplot() +
@@ -2789,9 +2751,9 @@ for (param in unique(population_param_combined$parameter)) {
     labs(title = param,  # Show the parameter name
          x = "Missing Percentage",
          y = "Value") +
-    scale_fill_manual(values = custom_colors, breaks = c("amelia", "MF", "mice", "midas", "xgb", "final_data")) +  # Set legend order manually
+    scale_fill_manual(values = custom_colors, breaks = c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")) +  # Set legend order manually
     my_theme +  # Apply your custom theme
-    guides(fill = guide_legend(title = NULL))  # Remove the legend title
+    guides(fill = guide_legend(title = "Imputation Method"))  # Set legend title
   
   # Store the plot in the list
   plot_list[[param]] <- p
@@ -2802,10 +2764,10 @@ combined_population_plot <- ggarrange(plotlist = plot_list, ncol = 3, nrow = cei
                                       common.legend = TRUE, legend = "right")
 
 # Save the plot as a PNG file with a higher height dimension for better spacing
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Population_Parameters_Plot_with_errorbars.png", width = 16, height = 12, units = 'in', res = 900)  # Increase height
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Population_Parameters_Plot_with_errorbars_Updated.png", 
+    width = 16, height = 9, units = 'in', res = 900)  # Increase height
 print(combined_population_plot)
 dev.off()
-
 
 
 
