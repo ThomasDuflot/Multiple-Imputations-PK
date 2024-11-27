@@ -3575,84 +3575,36 @@ combined_stats <- pk_param_comparison_combined %>%
   group_by(Imputation_Method, Missing_Percentage) %>%
   summarise(
     # Metrics for CL
-    MAE_CL = sprintf("%.3f ± %.3f", 
-                     mean(abs(CL_imputed - CL_original), na.rm = TRUE), 
-                     sd(abs(CL_imputed - CL_original), na.rm = TRUE)),
-    MPE_CL = sprintf("%.3f ± %.3f", 
-                     mean(((CL_imputed - CL_original) / CL_original) * 100, na.rm = TRUE), 
-                     sd(((CL_imputed - CL_original) / CL_original) * 100, na.rm = TRUE)),
-    RMSE_CL = sprintf("%.3f ± %.3f", 
-                      sqrt(mean((CL_imputed - CL_original)^2, na.rm = TRUE)), 
-                      sd((CL_imputed - CL_original), na.rm = TRUE)),
-    RMSE_percent_CL = sprintf("%.3f ± %.3f", 
-                               (sqrt(mean((CL_imputed - CL_original)^2, na.rm = TRUE)) / 
-                                  mean(CL_original, na.rm = TRUE)) * 100, 
-                               sd(((CL_imputed - CL_original) / CL_original) * 100, na.rm = TRUE)),
-
+    MAE_CL = mean(abs(CL_imputed - CL_original), na.rm = TRUE),
+    MPE_CL = mean(((CL_imputed - CL_original) / CL_original) * 100, na.rm = TRUE),
+    RMSE_CL = sqrt(mean((CL_imputed - CL_original)^2, na.rm = TRUE)),
+    RMSE_percent_CL = (RMSE_CL / mean(CL_original, na.rm = TRUE)) * 100,
+    
     # Metrics for V
-    MAE_V = sprintf("%.3f ± %.3f", 
-                    mean(abs(VC_imputed - VC_original), na.rm = TRUE), 
-                    sd(abs(VC_imputed - VC_original), na.rm = TRUE)),
-    MPE_V = sprintf("%.3f ± %.3f", 
-                    mean(((VC_imputed - VC_original) / VC_original) * 100, na.rm = TRUE), 
-                    sd(((VC_imputed - VC_original) / VC_original) * 100, na.rm = TRUE)),
-    RMSE_V = sprintf("%.3f ± %.3f", 
-                     sqrt(mean((VC_imputed - VC_original)^2, na.rm = TRUE)), 
-                     sd((VC_imputed - VC_original), na.rm = TRUE)),
-    RMSE_percent_V = sprintf("%.3f ± %.3f", 
-                              (sqrt(mean((VC_imputed - VC_original)^2, na.rm = TRUE)) / 
-                                 mean(VC_original, na.rm = TRUE)) * 100, 
-                              sd(((VC_imputed - VC_original) / VC_original) * 100, na.rm = TRUE)),
-
+    MAE_V = mean(abs(VC_imputed - VC_original), na.rm = TRUE),
+    MPE_V = mean(((VC_imputed - VC_original) / VC_original) * 100, na.rm = TRUE),
+    RMSE_V = sqrt(mean((VC_imputed - VC_original)^2, na.rm = TRUE)),
+    RMSE_percent_V = (RMSE_V / mean(VC_original, na.rm = TRUE)) * 100,
+    
     # Metrics for KA
-    MAE_KA = sprintf("%.3f ± %.3f", 
-                     mean(abs(KA_imputed - KA_original), na.rm = TRUE), 
-                     sd(abs(KA_imputed - KA_original), na.rm = TRUE)),
-    MPE_KA = sprintf("%.3f ± %.3f", 
-                     mean(((KA_imputed - KA_original) / KA_original) * 100, na.rm = TRUE), 
-                     sd(((KA_imputed - KA_original) / KA_original) * 100, na.rm = TRUE)),
-    RMSE_KA = sprintf("%.3f ± %.3f", 
-                      sqrt(mean((KA_imputed - KA_original)^2, na.rm = TRUE)), 
-                      sd((KA_imputed - KA_original), na.rm = TRUE)),
-    RMSE_percent_KA = sprintf("%.3f ± %.3f", 
-                               (sqrt(mean((KA_imputed - KA_original)^2, na.rm = TRUE)) / 
-                                  mean(KA_original, na.rm = TRUE)) * 100, 
-                               sd(((KA_imputed - KA_original) / KA_original) * 100, na.rm = TRUE)),
-    .groups = "drop"  # Drop grouping after summarisation
+    MAE_KA = mean(abs(KA_imputed - KA_original), na.rm = TRUE),
+    MPE_KA = mean(((KA_imputed - KA_original) / KA_original) * 100, na.rm = TRUE),
+    RMSE_KA = sqrt(mean((KA_imputed - KA_original)^2, na.rm = TRUE)),
+    RMSE_percent_KA = (RMSE_KA / mean(KA_original, na.rm = TRUE)) * 100,
+    .groups = "drop"  # Drop grouping after summarization
   )
 
+# Round values to 3 decimal places
+combined_stats <- combined_stats %>%
+  mutate(across(
+    starts_with("MAE_") | starts_with("MPE_") | starts_with("RMSE_"),
+    ~ round(.x, 3)
+  ))
 
 
-	
-	
-	combined_stats_long <- combined_stats %>%
-	  pivot_longer(
-	    cols = starts_with("MAE_") | starts_with("MPE_") | starts_with("RMSE_"),
-	    names_to = c("Metric", "Parameter"),
-	    names_pattern = "(MAE|MPE|RMSE|RMSE_percent)_(CL|V|KA)",
-	    values_to = "Value"
-	  ) %>%
-	  mutate(
-	    Metric = factor(Metric, levels = c("MAE", "MPE", "RMSE", "RMSE_percent")),
-	    Parameter = factor(Parameter, levels = c("CL", "V", "KA"))
-	  )
-
-# Reshape data to wide format with subcolumns for KA, V, and CL under each metric
-combined_stats_wide <- combined_stats_long %>%
-  pivot_wider(
-    names_from = c(Metric, Parameter),  # Combine Metric and Parameter
-    values_from = Value
-  )
-
-# Reorder Missing Percentage and Imputation Method
-combined_stats_wide <- combined_stats_wide %>%
-  arrange(
-    Missing_Percentage,
-    factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB"))
-  )
 
 # Reorder columns for RMSE and RMSE%
-combined_stats_wide <- combined_stats_wide %>%
+combined_stats_wide <- combined_stats %>%
   select(
     Missing_Percentage, Imputation_Method, 
     MAE_CL, MAE_V, MAE_KA, 
@@ -3661,7 +3613,464 @@ combined_stats_wide <- combined_stats_wide %>%
     RMSE_percent_CL, RMSE_percent_V, RMSE_percent_KA
   )
 
+# Reorder Missing_Percentage and Imputation_Method
+combined_stats_wide <- combined_stats_wide %>%
+  arrange(
+    Missing_Percentage,
+    factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB"))
+  )
 
+# Update header data for the new structure
+header_data <- data.frame(
+  col_keys = c("Missing_Percentage", "Imputation_Method",
+               "CL_MAE", "CL_MPE", "CL_RMSE", "CL_RMSE_percent", 
+               "V_MAE", "V_MPE", "V_RMSE", "V_RMSE_percent",
+               "KA_MAE", "KA_MPE", "KA_RMSE", "KA_RMSE_percent"),
+  level1 = c("Missing Percentage", "Imputation Method", 
+             "CL", "CL", "CL", "CL", 
+             "V", "V", "V", "V", 
+             "KA", "KA", "KA", "KA"),
+  level2 = c("", "", 
+             "MAE", "MPE", "RMSE", "RMSE%", 
+             "MAE", "MPE", "RMSE", "RMSE%", 
+             "MAE", "MPE", "RMSE", "RMSE%")
+)
+
+# Reorder and rename the columns in combined_stats_wide
+combined_stats_wide <- combined_stats %>%
+  transmute(
+    Missing_Percentage,
+    Imputation_Method,
+    CL_MAE = MAE_CL, CL_MPE = MPE_CL, CL_RMSE = RMSE_CL, CL_RMSE_percent = RMSE_percent_CL,
+    V_MAE = MAE_V, V_MPE = MPE_V, V_RMSE = RMSE_V, V_RMSE_percent = RMSE_percent_V,
+    KA_MAE = MAE_KA, KA_MPE = MPE_KA, KA_RMSE = RMSE_KA, KA_RMSE_percent = RMSE_percent_KA
+  ) %>%
+  arrange(
+    Missing_Percentage,
+    factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB"))
+  )
+
+# Ensure header_data aligns perfectly with combined_stats_wide
+header_data <- header_data %>%
+  filter(col_keys %in% colnames(combined_stats_wide))
+
+colnames(combined_stats_wide) <- header_data$col_keys
+
+# Create the flextable with the updated structure
+flextable_table <- flextable(combined_stats_wide) %>%
+  set_header_df(mapping = header_data, key = "col_keys") %>%
+  merge_h(part = "header") %>%
+  merge_v(j = c("Missing_Percentage")) %>%  # Merge vertically by Missing_Percentage
+  theme_box() %>%
+  set_header_labels(
+    Missing_Percentage = "Missing Percentage",
+    Imputation_Method = "Imputation Method"
+  ) %>%
+  fontsize(size = 10, part = "all") %>%
+  font(part = "all", fontname = "Times New Roman") %>%
+  bold(part = "header") %>%
+  align(align = "center", part = "all") %>%
+  width(j = c("Missing_Percentage", "Imputation_Method"), width = 1.5) %>%
+  width(j = c("CL_MAE", "CL_MPE", "CL_RMSE", "CL_RMSE_percent", 
+              "V_MAE", "V_MPE", "V_RMSE", "V_RMSE_percent", 
+              "KA_MAE", "KA_MPE", "KA_RMSE", "KA_RMSE_percent"), width = 1.5) %>%
+  border_inner_h(border = fp_border(color = "gray", width = 1)) %>%
+  border_outer(border = fp_border(color = "black", width = 1.5)) %>%
+  padding(padding = 5, part = "all") %>%
+  add_footer_lines(values = "This table summarizes MAE, MPE, RMSE, and RMSE% for each parameter (CL, V, KA), imputation method, and missing percentage.")
+
+# Save the flextable in a Word document
+doc <- read_docx()
+doc <- body_add_flextable(doc, value = flextable_table)
+print(doc, target = "Indiv_Param_Metrics_By_Parameter.docx")
+
+
+
+
+
+
+
+# Iterate through each dataset in the list
+for (dataset_name in names(all_data)) {
+  # Access the population parameters and individual parameters for the dataset
+  pop_params <- all_data[[dataset_name]][["population_parameters"]]
+  ind_params <- all_data[[dataset_name]][["parameters"]]
+  
+  # Extract the required values from the population_parameters
+  Cl_pop <- pop_params$value[pop_params$parameter == "Cl_pop"]
+  V_pop <- pop_params$value[pop_params$parameter == "V_pop"]
+  ka_pop <- pop_params$value[pop_params$parameter == "ka_pop"]
+  beta_Cl_logtCrCl <- pop_params$value[pop_params$parameter == "beta_Cl_logtCrCl"]
+  beta_Cl_UM_1 <- exp(pop_params$value[pop_params$parameter == "beta_Cl_UM_1"])
+  beta_V_logtWT <- pop_params$value[pop_params$parameter == "beta_V_logtWT"]
+  beta_ka_PPI_1 <- exp(pop_params$value[pop_params$parameter == "beta_ka_PPI_1"])
+  
+  # Compute CLiap, KAiap, and VCiap for each individual
+  ind_params <- ind_params %>%
+    mutate(
+      CLpri = Cl_pop * (CrCl / 90)^beta_Cl_logtCrCl * beta_Cl_UM_1^UM,
+      VCpri = V_pop * (WT / 70)^beta_V_logtWT,
+      KApri = ka_pop * beta_ka_PPI_1^PPI
+    )
+  
+  # Update the parameters dataframe in the all_data list
+  all_data[[dataset_name]][["parameters"]] <- ind_params
+}
+
+# Check one dataset to ensure the computation worked
+head(all_data[["amelia_1"]][["parameters"]])
+
+
+
+# Define the desired order of imputation methods
+desired_method_order <- c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")
+
+# Step 1: Extract PK parameters from all datasets and label them
+
+# Initialize a list to store the parameter data frames
+param_dfs <- list()
+
+# Process the final_data
+final_data_params <- all_data$final_data$parameters %>%
+  group_by(id) %>%
+  summarise(
+    CL = first(CLpri),
+    VC = first(VCpri),
+    KA = first(KApri)
+  ) %>%
+  ungroup() %>%
+  rename(ID = id) %>%
+  mutate(
+    Missing_Percentage = factor("0% NA", levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+    Imputation_Method = factor("Original Data", levels = desired_method_order)
+  )
+
+# Add to the list
+param_dfs[["Final Data"]] <- final_data_params
+
+# Get the names of the datasets (excluding 'final_data')
+dataset_names <- setdiff(names(all_data), "final_data")
+
+# Process each imputed dataset
+for (dataset_name in dataset_names) {
+  # Get the dataset
+  dataset <- all_data[[dataset_name]]
+  
+  # Extract PK parameters
+  params_df <- dataset$parameters %>%
+    group_by(id) %>%
+    summarise(
+      CL = first(CLpri),
+      VC = first(VCpri),
+      KA = first(KApri)
+    ) %>%
+    ungroup() %>%
+    rename(ID = id)
+  
+  # Determine the Imputation_Method
+  if (grepl("^amelia", dataset_name, ignore.case = TRUE)) {
+    method <- "Amelia"
+  } else if (grepl("^MF", dataset_name, ignore.case = TRUE)) {
+    method <- "MF"
+  } else if (grepl("^mice", dataset_name, ignore.case = TRUE)) {
+    method <- "Mice"
+  } else if (grepl("^MIDAS", dataset_name, ignore.case = TRUE)) {
+    method <- "MIDAS"
+  } else if (grepl("^XGB", dataset_name, ignore.case = TRUE)) {
+    method <- "XGB"
+  } else {
+    stop(paste("Unknown method in dataset name:", dataset_name))
+  }
+  
+  # Extract the missing percentage from the dataset name
+  # Assuming the dataset names end with '_1', '_2', '_3', '_4'
+  if (grepl("_1$", dataset_name)) {
+    percentage <- "5% NA"
+  } else if (grepl("_2$", dataset_name)) {
+    percentage <- "20% NA"
+  } else if (grepl("_3$", dataset_name)) {
+    percentage <- "50% NA"
+  } else if (grepl("_4$", dataset_name)) {
+    percentage <- "75% NA"
+  } else {
+    stop(paste("Could not determine Missing_Percentage for dataset:", dataset_name))
+  }
+  
+  # Add the columns to params_df with the correct factor levels
+  params_df <- params_df %>%
+    mutate(
+      Missing_Percentage = factor(percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+      Imputation_Method = factor(method, levels = desired_method_order)
+    )
+  
+  # Add to the list with the dataset_name as key
+  param_dfs[[dataset_name]] <- params_df
+}
+
+
+# Initialize a list to store IDs with missing data
+missing_ids_list <- list()
+
+# Loop over each dataset in 'missing_data_list'
+for (dataset_name in names(missing_data_list)) {
+  # Extract the percentage from the dataset name
+  # Assuming dataset names are like "missing_5perc", "missing_20perc", etc.
+  percentage_match <- str_extract(dataset_name, "\\d+")
+  
+  if (!is.na(percentage_match)) {
+    percentage_value <- as.integer(percentage_match)
+    percentage <- paste0(percentage_value, "% NA")
+  } else {
+    stop(paste("Could not extract percentage from dataset name:", dataset_name))
+  }
+  
+  # Get the dataset with missing data
+  data_with_missing <- missing_data_list[[dataset_name]]
+  
+  # Identify IDs with any missing data
+  ids_with_missing <- data_with_missing %>%
+    filter(is.na(WT) | is.na(CrCl) | is.na(PPI) | is.na(UM)) %>%
+    select(ID) %>%
+    distinct()
+  
+  # Store the IDs in the list
+  missing_ids_list[[percentage]] <- ids_with_missing$ID
+}
+
+# Step 3: Perform comparisons for IDs with missing data
+
+# Define the comparison function
+compare_params <- function(imputed_df, final_df, ids_with_missing) {
+  # Filter both data frames to include only IDs with missing data
+  imputed_df_filtered <- imputed_df %>% filter(ID %in% ids_with_missing)
+  final_df_filtered <- final_df %>% filter(ID %in% ids_with_missing)
+  
+  # Ensure IDs are of the same type
+  imputed_df_filtered$ID <- as.character(imputed_df_filtered$ID)
+  final_df_filtered$ID <- as.character(final_df_filtered$ID)
+  
+  # Proceed with the comparison
+  comparison_df <- imputed_df_filtered %>%
+    inner_join(final_df_filtered, by = "ID", suffix = c("_imputed", "_original")) %>%
+    mutate(
+      CL_diff = CL_imputed - CL_original,
+      VC_diff = VC_imputed - VC_original,
+      KA_diff = KA_imputed - KA_original,
+      CL_PE = (CL_imputed - CL_original) / CL_original * 100,
+      VC_PE = (VC_imputed - VC_original) / VC_original * 100,
+      KA_PE = (KA_imputed - KA_original) / KA_original * 100
+    )
+  return(comparison_df)
+}
+
+# Initialize a list to store comparison results
+comparison_results <- list()
+
+# Loop over the imputed datasets (excluding 'Final Data')
+for (name in names(param_dfs)) {
+  if (name != "Final Data") {
+    imputed_df <- param_dfs[[name]]
+    final_df <- param_dfs[["Final Data"]]
+    
+    # Get the Imputation_Method and Missing_Percentage
+    method <- as.character(unique(imputed_df$Imputation_Method))
+    percentage <- as.character(unique(imputed_df$Missing_Percentage))
+    
+    # Get the IDs with missing data for this percentage
+    ids_with_missing <- missing_ids_list[[percentage]]
+    
+    # Check if ids_with_missing is NULL or empty
+    if (is.null(ids_with_missing)) {
+      message(paste("No IDs with missing data found for", percentage))
+      next  # Skip to the next iteration
+    } else if (length(ids_with_missing) == 0) {
+      message(paste("IDs with missing data list is empty for", percentage))
+      next  # Skip to the next iteration
+    }
+    
+    # Ensure IDs are of the same type
+    ids_with_missing <- as.character(ids_with_missing)
+    imputed_df$ID <- as.character(imputed_df$ID)
+    final_df$ID <- as.character(final_df$ID)
+    
+    # Perform the comparison using the filtered IDs
+    comparison_df <- compare_params(imputed_df, final_df, ids_with_missing)
+    
+    # Add metadata
+    comparison_df <- comparison_df %>%
+      mutate(
+        Imputation_Method = factor(method, levels = desired_method_order),
+        Missing_Percentage = factor(percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+      )
+    
+    # Store in the list
+    comparison_results[[name]] <- comparison_df
+  }
+}
+
+# Combine all comparison results into one data frame
+pk_param_comparison_combined <- bind_rows(comparison_results)
+
+# Ensure Imputation_Method and Missing_Percentage are factors with desired levels
+pk_param_comparison_combined <- pk_param_comparison_combined %>%
+  mutate(
+    Imputation_Method = factor(Imputation_Method, levels = desired_method_order),
+    Missing_Percentage = factor(Missing_Percentage, levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
+  )
+
+
+
+
+
+# Step 4: Reshape the data for plotting
+
+# Reshape the data to have both Absolute Error and Percentage Error
+pk_params_long <- pk_param_comparison_combined %>%
+  pivot_longer(
+    cols = c(CL_diff, VC_diff, KA_diff, CL_PE, VC_PE, KA_PE),
+    names_to = c("Parameter", "ErrorType"),
+    names_pattern = "([A-Z]{2})_(.*)",
+    values_to = "ErrorValue"
+  ) %>%
+  mutate(
+    ErrorType = case_when(
+      ErrorType == "diff" ~ "Absolute Error",
+      ErrorType == "PE" ~ "Percentage Error"
+    ),
+    Parameter = factor(Parameter, levels = c("CL", "VC", "KA")),
+    ErrorType = factor(ErrorType, levels = c("Absolute Error", "Percentage Error")),
+    Imputation_Method = factor(Imputation_Method, levels = desired_method_order)  # Ensure levels are set
+  )
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = as.character(Parameter))
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = ifelse(Parameter == "VC", "V", Parameter))
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = factor(Parameter, levels = c("CL", "V", "KA")))
+
+
+# Step 5: Create and save plots for each parameter
+
+# Function to create a plot for a given parameter
+create_parameter_plot <- function(param_name) {
+  # Filter the data for the specific parameter
+  data_param <- pk_params_long %>% filter(Parameter == param_name)
+  
+  # Create the plot
+  plot_param <- ggplot(data_param, aes(x = Missing_Percentage, y = ErrorValue, fill = Imputation_Method)) +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA, color = "black", linewidth = 1.2) +
+    geom_point(
+      color = "black",
+      position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.75),
+      alpha = 1,
+      size = 0.6,
+      show.legend = FALSE
+    ) +
+    facet_grid2(ErrorType ~ ., scales = "free", independent = "y") +  # Facet by ErrorType
+    labs(
+      title = paste("Comparison of Absolute and Percentage Errors for", param_name),
+      x = "Percentage of Missing Data",
+      y = "Error Value",
+      fill = "Imputation Method"
+    ) +
+    scale_color_jco() +
+    scale_fill_jco() +
+    my_theme +
+    theme(
+      strip.background = element_rect(fill = "grey90", color = "grey50"),
+      strip.text = element_text(face = "bold", color = "black"),
+      plot.title = element_text(hjust = 0.5),
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      panel.spacing.y = unit(1, "cm"),
+      panel.border = element_rect(
+        colour = "black",
+        fill = NA,
+        size = 0.5
+      )
+    )
+  
+  return(plot_param)
+}
+
+# Get the unique parameters
+parameters <- unique(pk_params_long$Parameter)
+
+# Generate plots for each parameter and store them in a list
+plots <- list()
+for (param in parameters) {
+  plots[[param]] <- create_parameter_plot(param)
+}
+
+# Use ggarrange to arrange the plots in 3 rows
+final_plot <- ggarrange(
+  plots[["CL"]], plots[["V"]], plots[["KA"]],
+  ncol = 3, nrow = 1,  # Arrange in 3 rows
+  labels = c("A", "B", "C"),  # Add labels (optional)
+  common.legend = TRUE, legend = "bottom"  # Shared legend at the bottom
+)
+
+# Save the combined plot
+png("PKpri_Error_Comparison_All.png", width = 24, height = 13.5, units = 'in', res = 900)
+print(final_plot)
+dev.off()
+
+
+# Compute MAE, MPE, RMSE, and RMSE% for each parameter
+combined_stats <- pk_param_comparison_combined %>%
+  group_by(Imputation_Method, Missing_Percentage) %>%
+  summarise(
+    # Metrics for CL
+    MAE_CL = mean(abs(CL_imputed - CL_original), na.rm = TRUE),
+    MPE_CL = mean(((CL_imputed - CL_original) / CL_original) * 100, na.rm = TRUE),
+    RMSE_CL = sqrt(mean((CL_imputed - CL_original)^2, na.rm = TRUE)),
+    RMSE_percent_CL = (RMSE_CL / mean(CL_original, na.rm = TRUE)) * 100,
+    
+    # Metrics for V
+    MAE_V = mean(abs(VC_imputed - VC_original), na.rm = TRUE),
+    MPE_V = mean(((VC_imputed - VC_original) / VC_original) * 100, na.rm = TRUE),
+    RMSE_V = sqrt(mean((VC_imputed - VC_original)^2, na.rm = TRUE)),
+    RMSE_percent_V = (RMSE_V / mean(VC_original, na.rm = TRUE)) * 100,
+    
+    # Metrics for KA
+    MAE_KA = mean(abs(KA_imputed - KA_original), na.rm = TRUE),
+    MPE_KA = mean(((KA_imputed - KA_original) / KA_original) * 100, na.rm = TRUE),
+    RMSE_KA = sqrt(mean((KA_imputed - KA_original)^2, na.rm = TRUE)),
+    RMSE_percent_KA = (RMSE_KA / mean(KA_original, na.rm = TRUE)) * 100,
+    .groups = "drop"  # Drop grouping after summarization
+  )
+
+# Round values to 3 decimal places
+combined_stats <- combined_stats %>%
+  mutate(across(
+    starts_with("MAE_") | starts_with("MPE_") | starts_with("RMSE_"),
+    ~ round(.x, 3)
+  ))
+
+
+
+# Reorder columns for RMSE and RMSE%
+combined_stats_wide <- combined_stats %>%
+  select(
+    Missing_Percentage, Imputation_Method, 
+    MAE_CL, MAE_V, MAE_KA, 
+    MPE_CL, MPE_V, MPE_KA, 
+    RMSE_CL, RMSE_V, RMSE_KA, 
+    RMSE_percent_CL, RMSE_percent_V, RMSE_percent_KA
+  )
+
+# Reorder Missing_Percentage and Imputation_Method
+combined_stats_wide <- combined_stats_wide %>%
+  arrange(
+    Missing_Percentage,
+    factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB"))
+  )
+
+
+
+# Update header data
 header_data <- data.frame(
   col_keys = c("Missing_Percentage", "Imputation_Method",
                "MAE_CL", "MAE_V", "MAE_KA", 
@@ -3680,11 +4089,16 @@ header_data <- data.frame(
              "CL", "V", "KA")
 )
 
+# Ensure header_data aligns perfectly
+header_data <- header_data %>%
+  filter(col_keys %in% colnames(combined_stats_wide))
+
+colnames(combined_stats_wide) <- header_data$col_keys
 
 flextable_table <- flextable(combined_stats_wide) %>%
   set_header_df(mapping = header_data, key = "col_keys") %>%
   merge_h(part = "header") %>%
-  merge_v(j = c("Missing_Percentage", "Imputation_Method")) %>%
+  merge_v(j = c("Missing_Percentage")) %>%  # Merge vertically by Missing_Percentage
   theme_box() %>%
   set_header_labels(
     Missing_Percentage = "Missing Percentage",
@@ -3702,11 +4116,50 @@ flextable_table <- flextable(combined_stats_wide) %>%
   border_inner_h(border = fp_border(color = "gray", width = 1)) %>%
   border_outer(border = fp_border(color = "black", width = 1.5)) %>%
   padding(padding = 5, part = "all") %>%
-  add_footer_lines(values = "This table summarizes MAE, MPE, RMSE, and RMSE% (mean ± SD) for each parameter (KA, V, CL), imputation method, and missing percentage.")
+  add_footer_lines(values = "This table summarizes MAE, MPE, RMSE, and RMSE% for each parameter (KA, V, CL), imputation method, and missing percentage.")
+
 
 doc <- read_docx()
 doc <- body_add_flextable(doc, value = flextable_table)
-print(doc, target = "IndPopParam Metrics.docx")
+print(doc, target = "Pop Param Pri Metrics.docx")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
