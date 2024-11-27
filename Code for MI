@@ -2973,92 +2973,6 @@ print(doc, target = "Improved_Merged_Correlation_Table.docx")
 
 
 
-
-
-
-# Define the directory where your mlxtran files are stored
-mlxtran_directory <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
-
-
-
-# Helper function to extract the project name and percentage of NA
-extract_project_info <- function(project_name) {
-  name_parts <- unlist(strsplit(project_name, "_"))
-  project_name <- name_parts[1]
-  if (length(name_parts) > 1) {
-    na_percentage <- switch(name_parts[2],
-                            "1" = "5% NA",
-                            "2" = "20% NA",
-                            "3" = "50% NA",
-                            "4" = "75% NA",
-                            "data" = "0% NA")
-  } else {
-    na_percentage <- "0% NA"
-  }
-  return(list(project_name = project_name, na_percentage = na_percentage))
-}
-
-# Get a list of all .mlxtran files in the directory
-mlxtran_files <- list.files(path = mlxtran_directory, pattern = "*.mlxtran", full.names = TRUE)
-
-# Define fixed x and y axis limits
-x_limits <- c(0, 40)
-y_limits <- c(0, 20)
-
-# Initialize an empty list to store the plots
-vpc_plots <- list()
-
-# Loop through each .mlxtran file to create the plots
-for (i in seq_along(mlxtran_files)) {
-  
-  # Load the Monolix project
-  project_file <- mlxtran_files[i]
-  loadProject(project_file)
-  
-  # Extract project name and percentage of NA
-  project_info <- extract_project_info(tools::file_path_sans_ext(basename(project_file)))
-  
-  # Draw the VPC without stratification
-  vpc_plot <- plotVpc(obsName = "DV",
-                      settings = list(outlierDots = FALSE, useCorrpred = TRUE, grid = FALSE,
-                                      ylab = "Concentration", empPercentiles=TRUE, predPercentiles=TRUE, empirical=TRUE, theoretical=TRUE, xlab = "Time (in hour)"))
-  
-  # Add consistent x and y axis limits, title, and custom theme to the plot
-  vpc_plot <- vpc_plot +
-    ggtitle(paste(project_info$project_name, "with", project_info$na_percentage)) +
-    xlim(x_limits) +
-    ylim(y_limits) +
-    my_theme
-  
-  # Store the plot in the list
-  vpc_plots[[i]] <- vpc_plot
-}
-# Modify the title of plot 5 to "Original 0% NA"
-vpc_plots[[5]] <- vpc_plots[[5]] + ggtitle("Original with 0% NA")
-
-
-
-
-plot_indices <- c(
-  5, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-  5, 10, 11, 12, 13, 5, 14, 15,
-  16, 17, 5, 18, 19, 20, 21
-)
-
-combined_plot <- ggarrange(
-  plotlist = vpc_plots[plot_indices],
-  ncol = 5,
-  nrow = 5,
-  common.legend = TRUE,
-  legend = "bottom"
-)
-
-
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 12, units = 'in', res = 900)
-print(combined_plot)
-dev.off()
-
-
 directory_path <- "D:/MOBILITE/1er papier - Simulation Covariables/imputed_datasets_merged"
 # Get full paths of all CSV files in the directory
 csv_files <- list.files(path = directory_path, pattern = "\\.csv$", full.names = TRUE)
@@ -3708,7 +3622,7 @@ for (dataset_name in names(all_data)) {
   # Compute CLiap, KAiap, and VCiap for each individual
   ind_params <- ind_params %>%
     mutate(
-      CLpri = Cl_pop * (CrCl / 90)^beta_Cl_logtCrCl * beta_Cl_UM_1^UM,
+      CL_fixed = Cl_pop * (CrCl / 90)^beta_Cl_logtCrCl * beta_Cl_UM_1^UM,
       VCpri = V_pop * (WT / 70)^beta_V_logtWT,
       KApri = ka_pop * beta_ka_PPI_1^PPI
     )
@@ -3734,7 +3648,7 @@ param_dfs <- list()
 final_data_params <- all_data$final_data$parameters %>%
   group_by(id) %>%
   summarise(
-    CL = first(CLpri),
+    CL = first(CL_fixed),
     VC = first(VCpri),
     KA = first(KApri)
   ) %>%
@@ -3760,7 +3674,7 @@ for (dataset_name in dataset_names) {
   params_df <- dataset$parameters %>%
     group_by(id) %>%
     summarise(
-      CL = first(CLpri),
+      CL = first(CL_fixed),
       VC = first(VCpri),
       KA = first(KApri)
     ) %>%
@@ -4129,6 +4043,231 @@ print(doc, target = "Pop Param Pri Metrics.docx")
 
 
 
+# Initialize an empty list to store data frames
+combined_data_list <- list()
+
+# Loop over each dataset in all_data
+for (dataset_name in names(all_data)) {
+  # Skip 'final_data' for now
+  if (dataset_name == "final_data") next
+  
+  # Extract the dataset
+  dataset <- all_data[[dataset_name]]
+  
+  # Check if 'parameters' component exists
+  if ("parameters" %in% names(dataset)) {
+    # Extract the 'parameters' data frame
+    parameters_df <- dataset$parameters
+    
+    # Check if 'CLpri', 'VCpri', 'KApri' columns exist
+    if (all(c("CLpri", "VCpri", "KApri") %in% names(parameters_df))) {
+      # Create a data frame with necessary columns
+      temp_df <- parameters_df %>%
+        select(ID = id, CLpri, VCpri, KApri)
+      
+      # Add 'Imputation_Method' and 'Missing_Percentage' columns based on the dataset name
+      temp_df <- temp_df %>%
+        mutate(
+          Imputation_Method = gsub("_.*", "", dataset_name),
+          Missing_Percentage = gsub(".*_", "", dataset_name)
+        )
+      
+      # Append to the list
+      combined_data_list[[dataset_name]] <- temp_df
+    }
+  }
+}
+
+# Handle 'final_data' separately
+if ("final_data" %in% names(all_data)) {
+  # Extract the 'parameters' data frame from 'final_data'
+  final_parameters_df <- all_data$final_data$parameters
+  
+  # Check if 'CLpri', 'VCpri', 'KApri' columns exist
+  if (all(c("CLpri", "VCpri", "KApri") %in% names(final_parameters_df))) {
+    # Create a data frame with necessary columns
+    final_temp_df <- final_parameters_df %>%
+      select(ID = id, CLpri, VCpri, KApri)
+    
+    # Define the list of imputation methods
+    imputation_methods <- c("amelia", "MF", "mice", "midas", "xgb")
+    
+    # Create a list to store data frames for each method
+    final_data_list <- list()
+    
+    # Loop over each imputation method and create a data frame
+    for (method in imputation_methods) {
+      method_df <- final_temp_df %>%
+        mutate(
+          Imputation_Method = method,
+          Missing_Percentage = "0"  # We'll recode this later
+        )
+      # Add to the list
+      final_data_list[[method]] <- method_df
+    }
+    
+    # Combine all method data frames into one
+    final_combined_df <- bind_rows(final_data_list)
+    
+    # Append to the combined data list
+    combined_data_list[["final_data"]] <- final_combined_df
+  }
+}
+
+# Combine all data frames into one
+combined_mlx_val <- bind_rows(combined_data_list)
+
+combined_mlx_val <- combined_mlx_val %>%
+  mutate(
+    Imputation_Method = recode(Imputation_Method,
+      "amelia" = "Amelia",
+      "mice" = "Mice",
+      "midas" = "MIDAS",
+      "xgb" = "XGB"
+      # Assuming "MF" remains "MF"
+    ),
+    Missing_Percentage = recode(Missing_Percentage,
+      "0" = "0% NA",
+      "1" = "5% NA",
+      "2" = "20% NA",
+      "3" = "50% NA",
+      "4" = "75% NA"
+    )
+  )
+
+
+# Set 'Imputation_Method' and 'Missing_Percentage' as factors with specified levels
+combined_mlx_val <- combined_mlx_val %>%
+  mutate(
+    Imputation_Method = factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB")),
+    Missing_Percentage = factor(Missing_Percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA"))
+  )
+
+
+plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, variable_name) {
+  
+  
+  # Set binwidth based on the variable
+  binwidth_value <- if (variable == "CLpri") 0.2 else if (variable == "VCpri") 1 else 0.1
+  
+  # Filter out non-positive values for log-transformation
+  data_filtered <- data %>%
+    filter(!!sym(variable) > 0)
+  
+  # Compute per-group parameters for log-normal distribution
+  subset_params <- data_filtered %>%
+    group_by(Missing_Percentage, Imputation_Method) %>%
+    summarize(
+      meanlog = mean(log(!!sym(variable)), na.rm = TRUE),
+      sdlog = sd(log(!!sym(variable)), na.rm = TRUE),
+      count = n(),
+      .groups = "keep"  # Retain grouping
+    )
+  
+  # Create a grid of x-values
+  x_grid <- seq(min(data_filtered[[variable]], na.rm = TRUE), max(data_filtered[[variable]], na.rm = TRUE), length.out = 100)
+  
+  # Compute log-normal density values per group
+  lognormal_data <- subset_params %>%
+    group_modify(~ {
+      meanlog <- .x$meanlog[1]
+      sdlog <- .x$sdlog[1]
+      count <- .x$count[1]
+      # Handle cases where sdlog is NA or zero
+      if (is.na(sdlog) || sdlog == 0 || count < 2) {
+        return(data.frame(
+          x = numeric(0),
+          y = numeric(0)
+        ))
+      }
+      data.frame(
+        x = x_grid,
+        y = dlnorm(x_grid, meanlog, sdlog) * count * binwidth_value
+      )
+    })
+  
+  # Compute density estimates per group
+  density_data <- data_filtered %>%
+    group_by(Missing_Percentage, Imputation_Method) %>%
+    group_modify(~ {
+      .x_group <- .x
+      if(nrow(.x_group) < 2){
+        return(data.frame(
+          x = numeric(0),
+          y = numeric(0)
+        ))
+      }
+      dens <- density(.x_group[[variable]], na.rm = TRUE)
+      data.frame(
+        x = dens$x,
+        y = dens$y * length(.x_group[[variable]]) * binwidth_value
+      )
+    })
+  
+  # Define your custom theme if not already defined
+  my_theme <- theme_bw()
+  
+  # Create the base plot
+  plot <- ggplot(data_filtered, aes_string(x = variable)) +
+    # Histogram
+    geom_histogram(aes(y = ..count.., fill = Imputation_Method),
+                   binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
+    # Log-normal curve per group
+    geom_line(data = lognormal_data,
+              aes(x = x, y = y, color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
+              size = 1, show.legend = TRUE) +
+    # Density curve per group
+    geom_line(data = density_data,
+              aes(x = x, y = y, color = "Density Estimate", linetype = "Density Estimate"),
+              size = 1, alpha = 0.5, show.legend = TRUE) +
+    # Facet by Missing_Percentage and Imputation_Method
+    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+    # Add the color palette from ggsci
+    scale_fill_jco() +
+    # Add manual legends for Log-normal and Density Estimate
+    scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")) +
+    scale_color_manual(name = "Legend", values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")) +
+    labs(title = paste("Distribution of", variable_name),
+         x = variable_name,
+         y = "Count") +
+    # Custom theme with spacing and legend
+    my_theme +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines"),
+      legend.position = "top",
+      legend.key = element_rect(fill = "white", color = "black"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(size = 12),
+      panel.border = element_rect(color = "grey", fill = NA, size = 1),
+      strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+    ) +
+    # Custom guides for the legend
+    guides(
+      fill = guide_legend(title = "Imputation Method"),
+      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
+      color = "none"
+    )
+  
+  return(list(
+    plot = plot,
+    lognormal_data = lognormal_data,
+    density_data = density_data
+  ))
+}
+
+
+# Example usage for CL
+CL_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "CLpri", "CL")
+V_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "VCpri", "V")
+KA_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "KApri", "KA")
+
+png("PK_param_Prior_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
+ggarrange(KA_Plot_fixed$plot,V_Plot_fixed$plot,CL_Plot_fixed$plot,nrow=3,common.legend=TRUE)
+dev.off()
 
 
 
@@ -4157,6 +4296,62 @@ print(doc, target = "Pop Param Pri Metrics.docx")
 
 
 
+plot_histogram_without_curves <- function(data, variable, variable_name) {
+  
+  # Set binwidth based on the variable
+  binwidth_value <- if (variable == "CLpri") 0.2 else if (variable == "VCpri") 1 else 0.1
+  
+  # Filter out non-positive values (if necessary)
+  data_filtered <- data %>%
+    filter(!!sym(variable) > 0)
+  
+  # Define your custom theme if not already defined
+  my_theme <- theme_bw()
+  
+  # Create the base plot
+  plot <- ggplot(data_filtered, aes_string(x = variable)) +
+    # Histogram
+    geom_histogram(aes(y = ..count.., fill = Imputation_Method),
+                   binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
+    # Facet by Missing_Percentage and Imputation_Method
+    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+    # Add the color palette from ggsci
+    scale_fill_jco() +
+    labs(title = paste("Distribution of", variable_name),
+         x = variable_name,
+         y = "Count") +
+    # Custom theme with spacing and legend
+    my_theme +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      axis.title = element_text(size = 16),
+      axis.text = element_text(size = 14),
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines"),
+      legend.position = "top",
+      legend.key = element_rect(fill = "white", color = "black"),
+      legend.title = element_text(face = "bold"),
+      legend.text = element_text(size = 12),
+      panel.border = element_rect(color = "grey", fill = NA, size = 1),
+      strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+    ) +
+    # Custom guides for the legend
+    guides(
+      fill = guide_legend(title = "Imputation Method")
+    )
+  
+  return(plot)
+}
+
+# Generate the plots
+CL_Plot_simple <- plot_histogram_without_curves(combined_mlx_val, "CLpri", "CL")
+V_Plot_simple <- plot_histogram_without_curves(combined_mlx_val, "VCpri", "V")
+KA_Plot_simple <- plot_histogram_without_curves(combined_mlx_val, "KApri", "KA")
+
+
+png("PK_param_Prior_Simple_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
+ggarrange(KA_Plot_simple,V_Plot_simple,CL_Plot_simple,nrow=3,common.legend=TRUE)
+dev.off()
 
 
 
@@ -4177,8 +4372,88 @@ print(doc, target = "Pop Param Pri Metrics.docx")
 
 
 
+# Define the directory where your mlxtran files are stored
+mlxtran_directory <- "D:/MOBILITE/1er papier - Simulation Covariables/Monolix"
 
 
+
+# Helper function to extract the project name and percentage of NA
+extract_project_info <- function(project_name) {
+  name_parts <- unlist(strsplit(project_name, "_"))
+  project_name <- name_parts[1]
+  if (length(name_parts) > 1) {
+    na_percentage <- switch(name_parts[2],
+                            "1" = "5% NA",
+                            "2" = "20% NA",
+                            "3" = "50% NA",
+                            "4" = "75% NA",
+                            "data" = "0% NA")
+  } else {
+    na_percentage <- "0% NA"
+  }
+  return(list(project_name = project_name, na_percentage = na_percentage))
+}
+
+# Get a list of all .mlxtran files in the directory
+mlxtran_files <- list.files(path = mlxtran_directory, pattern = "*.mlxtran", full.names = TRUE)
+
+# Define fixed x and y axis limits
+x_limits <- c(0, 40)
+y_limits <- c(0, 20)
+
+# Initialize an empty list to store the plots
+vpc_plots <- list()
+
+# Loop through each .mlxtran file to create the plots
+for (i in seq_along(mlxtran_files)) {
+  
+  # Load the Monolix project
+  project_file <- mlxtran_files[i]
+  loadProject(project_file)
+  
+  # Extract project name and percentage of NA
+  project_info <- extract_project_info(tools::file_path_sans_ext(basename(project_file)))
+  
+  # Draw the VPC without stratification
+  vpc_plot <- plotVpc(obsName = "DV",
+                      settings = list(outlierDots = FALSE, useCorrpred = TRUE, grid = FALSE,
+                                      ylab = "Concentration", empPercentiles=TRUE, predPercentiles=TRUE, empirical=TRUE, theoretical=TRUE, xlab = "Time (in hour)"))
+  
+  # Add consistent x and y axis limits, title, and custom theme to the plot
+  vpc_plot <- vpc_plot +
+    ggtitle(paste(project_info$project_name, "with", project_info$na_percentage)) +
+    xlim(x_limits) +
+    ylim(y_limits) +
+    my_theme
+  
+  # Store the plot in the list
+  vpc_plots[[i]] <- vpc_plot
+}
+# Modify the title of plot 5 to "Original 0% NA"
+vpc_plots[[5]] <- vpc_plots[[5]] + ggtitle("Original with 0% NA")
+
+
+
+
+plot_indices <- c(
+  5, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+  5, 10, 11, 12, 13, 5, 14, 15,
+  16, 17, 5, 18, 19, 20, 21
+)
+
+combined_plot <- ggarrange(
+  plotlist = vpc_plots[plot_indices],
+  ncol = 5,
+  nrow = 5,
+  common.legend = TRUE,
+  legend = "bottom"
+)
+
+
+
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 12, units = 'in', res = 900)
+print(combined_plot)
+dev.off()
 
 
 
