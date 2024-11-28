@@ -1753,6 +1753,161 @@ dev.off()
 
 
 
+# Define the imputation methods
+methods <- c('Mice', 'Amelia', 'MF', 'XGB', 'MIDAS')
+
+# Define the missing percentages
+missing_percentages <- c('0% NA', '5% NA', '20% NA', '50% NA', '75% NA')
+
+# Extract 'final_data' from the list
+final_data <- all_datasets[[1]]  # Assuming 'final_data' is the first in the list
+
+# Replicate 'final_data' for each method
+final_data_replicates <- lapply(methods, function(method) {
+  df <- final_data
+  df$Imputation_Method <- method
+  df$Missing_Percentage <- '0% NA'
+  # Keep only the 'WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage' columns
+  df <- df[, c('WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage')]
+  return(df)
+})
+
+# Name the replicated data frames
+names(final_data_replicates) <- methods
+
+# Now, process each imputed data frame in 'all_datasets' (excluding 'final_data')
+for (i in 2:length(all_datasets)) {  # Start from 2 to skip 'final_data'
+  # Get the data frame
+  df <- all_datasets[[i]]
+  
+  # Keep only the first row for each ID
+  df <- df[!duplicated(df$ID), ]
+  
+  # Extract the method and missing percentage from the list index
+  method_index <- ((i - 2) %/% 4) + 1  # Determine method index
+  method <- methods[method_index]
+  missing_pct <- missing_percentages[(i - 2) %% 4 + 2]  # Get missing percentage
+  
+  # Add the 'Imputation_Method' and 'Missing_Percentage' columns
+  df$Imputation_Method <- method
+  df$Missing_Percentage <- missing_pct
+  
+  # Keep only the 'WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage' columns
+  df <- df[, c('WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage')]
+  
+  # Update the data frame in the list
+  all_datasets[[i]] <- df
+}
+
+# Combine the replicated 'final_data' data frames with the imputed data frames
+# Exclude the original 'final_data' from 'all_datasets' since we have its replicates
+combined_datasets <- c(final_data_replicates, all_datasets[-1])
+
+# Now, create the long-format data frame
+long_df <- do.call(rbind, combined_datasets)
+
+# Reset row names to avoid duplicates
+rownames(long_df) <- NULL
+
+# View the first few rows of the long-format data frame
+head(long_df)
+
+
+# Define the plotting function
+plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
+    # Determine binwidth based on the variable
+    binwidth_value <- ifelse(variable == "WT", 4, 5)  # Adjust as needed
+    
+    # Compute group statistics (mean and standard deviation)
+    group_stats <- data %>%
+        group_by(Imputation_Method, Missing_Percentage) %>%
+        summarize(
+            mean_value = mean(.data[[variable]], na.rm = TRUE),
+            sd_value = sd(.data[[variable]], na.rm = TRUE)
+        )
+    
+    # Create a grid of x values for the theoretical curves
+    x_min <- min(data[[variable]], na.rm = TRUE)
+    x_max <- max(data[[variable]], na.rm = TRUE)
+    x_values <- seq(x_min, x_max, length.out = 200)
+    
+    # Create data frames for the Gaussian curves
+    gaussian_data <- group_stats %>%
+        rowwise() %>%
+        do({
+            data.frame(
+                Imputation_Method = .$Imputation_Method,
+                Missing_Percentage = .$Missing_Percentage,
+                x = x_values,
+                y = dnorm(x_values, mean = .$mean_value, sd = .$sd_value)
+            )
+        })
+    
+    # Create the plot
+    plot <- ggplot(data, aes_string(x = variable)) +
+        # Histogram
+        geom_histogram(aes(y = ..density.., fill = Imputation_Method),
+                       binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
+        # Density curve
+        geom_density(aes(y = ..density.., color = "Density Estimate", linetype = "Density Estimate"),
+                     size = 1, alpha = 0.5, show.legend = TRUE) +
+        # Gaussian curve
+        geom_line(data = gaussian_data,
+                  aes(x = x, y = y, color = "Gaussian Distribution", linetype = "Gaussian Distribution"),
+                  size = 1, show.legend = TRUE) +
+        # Facet by Imputation_Method and Missing_Percentage
+        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+        # Add the color palette from ggsci
+        scale_fill_jco() +
+        # Customize colors and linetypes for the legend
+        scale_color_manual(name = "Legend", values = c("Density Estimate" = "red", "Gaussian Distribution" = "blue")) +
+        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +
+        # Labels and titles
+        labs(title = paste("Distribution of", variable_name),
+             x = variable_name,
+             y = "Density") +
+        # Custom theme settings
+        theme_bw() +
+        theme(
+            plot.title = element_text(hjust = 0.5, face = "bold", size = 18),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            strip.text = element_text(face = "bold", size = 14),
+            panel.spacing = unit(1, "lines"),
+            legend.position = "top",
+            legend.key = element_rect(fill = "white", color = "black"),
+            legend.title = element_text(face = "bold", size = 14),
+            legend.text = element_text(size = 12),
+            panel.border = element_rect(color = "grey", fill = NA, size = 1),
+            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+        ) +
+        # Adjust legend guides
+        guides(
+            fill = guide_legend(title = "Imputation Method", override.aes = list(alpha = 1)),
+            linetype = guide_legend(title = "Curve Type", override.aes = list(color = c("red", "blue"))),
+            color = "none"
+        )
+    
+    # Return the plot
+    return(plot)
+}
+
+
+
+
+plot_WT <- plot_histogram_with_gaussian_and_density_fixed(long_df, "WT", "Weight")
+plot_CrCl <- plot_histogram_with_gaussian_and_density_fixed(long_df, "CrCl", "Creatinine Clearance")
+
+
+png("WT_CrCl_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
+ggarrange(plot_WT,plot_CrCl,nrow=2,common.legend=TRUE)
+dev.off()
+
+
+
+
+
+
 
 # Ensure the column names are consistent (optional, depending on your specific case)
 # If necessary, rename columns in one or more data frames to ensure consistency.
