@@ -683,7 +683,7 @@ for (i in 1:length(missing_data_list)) {
   imputed_WT <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_WT$ID)
   imputed_CrCl <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_CrCl$ID)
   imputed_PPI <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$ID)
-  imputed_UM <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$UM)  
+  imputed_UM <- mice_imputed_data_list[[i]] %>% filter(ID %in% missing_UM$ID)  
   # Match imputed with original data and compute errors for WT
   WT_error <- imputed_WT %>%
     inner_join(final_data %>% select(ID, WT), by = "ID") %>%
@@ -712,7 +712,7 @@ for (i in 1:length(missing_data_list)) {
            ConcordancePPI = PPI_imputed == PPI_original,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
            Imputation_Method = "Mice")
-  UM_conc <- imputed_PPI %>%
+  UM_conc <- imputed_UM %>%
     inner_join(final_data %>% select(ID, UM), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
     mutate(UM_imputed = UM.x, UM_original = UM.y,
@@ -809,7 +809,7 @@ for (i in 1:length(missing_data_list)) {
   imputed_WT <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_WT$ID)
   imputed_CrCl <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_CrCl$ID)
   imputed_PPI <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$ID)
-  imputed_UM <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_PPI$UM)  
+  imputed_UM <- MF_imputed_data_list[[i]] %>% filter(ID %in% missing_UM$ID)  
 
   
   # Match imputed with original data and compute errors for WT
@@ -840,7 +840,7 @@ for (i in 1:length(missing_data_list)) {
            ConcordancePPI = PPI_imputed == PPI_original,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
            Imputation_Method = "MF")
-  UM_conc <- imputed_PPI %>%
+  UM_conc <- imputed_UM %>%
     inner_join(final_data %>% select(ID, UM), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
     mutate(UM_imputed = UM.x, UM_original = UM.y,
@@ -1578,9 +1578,9 @@ for (i in seq_along(all_datasets)) {
 
 
 plot_indices <- c(
-  1, 2, 3, 4, 5,1, 6, 7, 8, 9,
-  1, 10, 11, 12, 13, 1, 14, 15,
-  16, 17, 1, 18, 19, 20, 21
+  1, 6, 7, 8, 9,
+  1, 10, 11, 12, 13,1, 2, 3, 4, 5,1, 18, 19, 20, 21, 1, 14, 15,
+  16, 17
 )
 
 
@@ -1597,7 +1597,7 @@ combined_plot <- ggarrange(
 
 # Save the combined plot to a PNG file using png() and dev.off()
 # Set the output image size and resolution
-png("Correlation plot.png", width = 20, height = 16, units = 'in', res = 900)
+png("Correlation plot.png", width = 16, height = 16, units = 'in', res = 900)
 
 # Draw the combined plot
 print(combined_plot)
