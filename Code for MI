@@ -573,17 +573,6 @@ image_write(combined_img, path = "Combined_Missing_Data_Final.png")
 
 
 
-# Read the files for each method into separate lists
-Amelia_imputed_data_list <- read_imputed_data("amelia")
-MF_imputed_data_list     <- read_imputed_data("MF")
-mice_imputed_data_list   <- read_imputed_data("mice")
-MIDAS_imputed_data_list  <- read_imputed_data("MIDAS")
-XGB_imputed_data_list    <- read_imputed_data("XGB")
-
-
-
-
-
 # Initialize the list for storing imputed data
 mice_imputed_data_list <- list()
 
@@ -1504,10 +1493,10 @@ all_datasets <- list(
 dataset_names <- c(
   "Original Data",
   
-  # MICE datasets with missing percentages
-  paste0("MICE ", missing_percentages),
+  # Mice datasets with missing percentages
+  paste0("Mice ", missing_percentages),
   
-  # AMELIA datasets
+  # Amelia datasets
   paste0("Amelia ", missing_percentages),
   
   # MF datasets
@@ -1519,6 +1508,7 @@ dataset_names <- c(
   # MIDAS datasets
   paste0("MIDAS ", missing_percentages)
 )
+
 
 # Ensure that the number of datasets matches the number of names
 if (length(all_datasets) != length(dataset_names)) {
@@ -1930,14 +1920,14 @@ summary_stats <- combined_data %>%
     # Absolute Error with Standard Deviation
     AE_WT = sprintf("%.2f ± %.2f", mean(AE_WT, na.rm = TRUE), sd(AE_WT, na.rm = TRUE)),
     AE_CrCl = sprintf("%.2f ± %.2f", mean(AE_CrCl, na.rm = TRUE), sd(AE_CrCl, na.rm = TRUE)),
-    
+
     # Percentage Error with Standard Deviation
     PE_WT = sprintf("%.2f ± %.2f", mean(PE_WT, na.rm = TRUE), sd(PE_WT, na.rm = TRUE)),
     PE_CrCl = sprintf("%.2f ± %.2f", mean(PE_CrCl, na.rm = TRUE), sd(PE_CrCl, na.rm = TRUE)),
     
     # Percentage of Concordance
-    Concordance_PPI = sprintf("%.2f%%", mean(PPI, na.rm = TRUE) * 100),
-    Concordance_UM = sprintf("%.2f%%", mean(UM, na.rm = TRUE) * 100)
+    Concordance_PPI = sprintf("%.2f%%", mean(ConcordancePPI, na.rm = TRUE) * 100),
+    Concordance_UM = sprintf("%.2f%%", mean(ConcordanceUM, na.rm = TRUE) * 100)
   ) %>%
   ungroup()
 
@@ -1985,6 +1975,16 @@ doc <- read_docx() %>%
 print(doc, target = "Summary_Statistics_with_Concordance.docx")
 
 
+
+
+combined_data <- combined_data %>%
+  mutate(
+    Imputation_Method = recode(Imputation_Method,
+                               "amelia" = "Amelia",
+                               "mice" = "Mice")  # Ensure consistent capitalization
+  )
+
+
 # View the combined data frame
 print(combined_data)
 long_combined_data <- combined_data %>%
@@ -2000,6 +2000,8 @@ long_combined_data <- combined_data %>%
       labels = c("Absolute Error", "Percentage Error")  # New labels
     )
   )
+
+
 
 
 AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = Imputation_Method)) +
@@ -2036,7 +2038,7 @@ dev.off()
 # Assuming 'combined_data' already contains both PPI and UM variables
 
 combined_data <- combined_data %>%
-  rename(PPI = ConcordancePPI, UM = ConcordanceUM)
+  rename(PPI = Concordance_PPI, UM = Concordance_UM)
 
 # Count the number of TRUE/FALSE for PPI, grouped by Imputation_Method and Missing_Values
 concordance_summary_PPI <- combined_data %>%
@@ -2142,17 +2144,17 @@ merged_imputed_data_list <- c(
 )
 
 # Append final_data to the merged list
-merged_imputed_data_list$final_data <- final_data
+merged_imputed_data_list$final_data <- final_data_mice
 
 # Check the structure of the merged list (including final_data)
 str(merged_imputed_data_list)
 
 # Optionally, print the names of the datasets for verification
 names(merged_imputed_data_list) <- c(
-  paste0("mice_", seq_along(mice_imputed_data_list)),
+  paste0("Mice_", seq_along(mice_imputed_data_list)),
   paste0("MF_", seq_along(MF_imputed_data_list)),
   paste0("MIDAS_", seq_along(MIDAS_imputed_data_list)),
-  paste0("amelia_", seq_along(amelia_imputed_data_list)),
+  paste0("Amelia_", seq_along(amelia_imputed_data_list)),
   paste0("XGB_", seq_along(XGB_imputed_data_list)),
   "final_data"
 )
@@ -2280,18 +2282,6 @@ for (i in seq_along(merged_imputed_data_list)) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 # Define the base directory by removing the "Figures" part
 base_directory <- "D:/MOBILITE/1er papier - Simulation Covariables"
 
@@ -2371,130 +2361,6 @@ write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
 
 
 
-
-
-# Exclude final_data
-filtered_combined_data <- combined_subset_data %>%
-  filter(Imputation_Method != "final")  # Exclude final data
-
-# Reorder Missing_Percentage and Imputation_Method as factors
-filtered_combined_data$Missing_Percentage <- factor(filtered_combined_data$Missing_Percentage,
-                                                  levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
-
-filtered_combined_data$Imputation_Method <- factor(filtered_combined_data$Imputation_Method,
-                                                 levels = c("amelia", "MF", "mice", "MIDAS", "XGB"))
-
-
-
-
-
-
-
-# Corrected function to match density with the histogram by dividing by the binwidth and add custom fill, spacing, and proper legend
-plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
-    binwidth_value <- ifelse(variable == "WT", 2, 2)  # Define binwidth
-    
-    ggplot(data, aes_string(x = variable)) +
-        # Histogram with appropriate binwidth
-        geom_histogram(aes(y = ..count../2.5, fill = Imputation_Method),  
-                       binwidth = binwidth_value,  
-                       color = "black", alpha = 0.7, show.legend = TRUE) +
-        
-        # Gaussian curve for each subset
-        stat_function(data = data,
-                      fun = function(x) {
-                          mean_val <- mean(data[[variable]], na.rm = TRUE)
-                          sd_val <- sd(data[[variable]], na.rm = TRUE)
-                          dnorm(x, mean = mean_val, sd = sd_val)*100
-                      }, 
-                      aes(linetype = "Gaussian Distribution", color = "Gaussian Distribution"), 
-                      size = 1, show.legend = TRUE) +
-        
-        # Density curve properly scaled by dividing by the binwidth
-        geom_density(aes(y = ..density..*100 , 
-                         linetype = "Density Estimate", color = "Density Estimate"),  
-                     size = 1, alpha = 0.5, show.legend = TRUE) +
-        
-        # Facet by Missing_Percentage and Imputation_Method with custom spacing
-        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
-        
-        # Add the color palette from ggsci
-        scale_fill_jco() +
-        
-        # Add manual legends for Gaussian and Density Estimate, both with solid lines and color differentiation
-        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +  
-        scale_color_manual(name = "Legend", values = c("Gaussian Distribution" = "blue", "Density Estimate" = "red")) + 
-        
-        labs(title = paste("Distribution of", variable_name),
-             x = variable_name,
-             y = "Count") +
-        
-        # Custom theme with spacing and legend
-        my_theme +
-        theme(
-            plot.title = element_text(hjust = 0.5, face = "bold"),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            strip.text = element_text(face = "bold"),
-            
-            # Add spacing between facets for better separation
-            panel.spacing = unit(1, "lines"),  
-            
-            # Adjust legend
-            legend.position = "top",
-            legend.key = element_rect(fill = "white", color = "black"), 
-            legend.title = element_text(face = "bold"),
-            legend.text = element_text(size = 12),
-            
-            # Add grey borders to each facet panel
-            panel.border = element_rect(color = "grey", fill = NA, size = 1),  
-            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
-        ) +
-        
-        # Custom guides for the legend
-        guides(
-            fill = guide_legend(title = "Imputation Method"),
-            linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),  
-            color = "none"
-        )
-}
-
-# Plot for WT
-WT_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "WT", "Weight (WT)")
-
-# Save the plot for WT
-png("WT_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(WT_Plot_fixed)
-dev.off()
-
-
-
-# Plot for CrCl
-CrCl_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "CrCl", "Creatinine Clearance (CrCl)")
-
-
-# Save the plot for CrCl
-png("CrCl_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(CrCl_Plot_fixed)
-dev.off()
-
-
-combined_plot <- ggarrange(
-  WT_Plot_fixed, 
-  CrCl_Plot_fixed,
-  nrow = 2,
-  common.legend = TRUE,  # Combine legends
-  labels = "AUTO"        # Add labels "A", "B", etc.
-)
-
-# Display the combined plot
-print(combined_plot)
-
-
-
-png("WT_CrCl_Distrib.png", width = 12, height = 16, units = 'in', res = 900)
-print(combined_plot)
-dev.off()
 
 OFVval <- read.csv2("D:/MOBILITE/1er papier - Simulation Covariables/OBJ/OBJ.csv")
 
