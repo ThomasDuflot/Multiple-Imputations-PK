@@ -573,17 +573,6 @@ image_write(combined_img, path = "Combined_Missing_Data_Final.png")
 
 
 
-# Read the files for each method into separate lists
-Amelia_imputed_data_list <- read_imputed_data("amelia")
-MF_imputed_data_list     <- read_imputed_data("MF")
-mice_imputed_data_list   <- read_imputed_data("mice")
-MIDAS_imputed_data_list  <- read_imputed_data("MIDAS")
-XGB_imputed_data_list    <- read_imputed_data("XGB")
-
-
-
-
-
 # Initialize the list for storing imputed data
 mice_imputed_data_list <- list()
 
@@ -937,14 +926,14 @@ for(i in seq_along(missing_data_list)) {
 for (i in seq_along(MIDAS_imputed_data_list)) {
   #MIDAS_imputed_data_list[[i]]$ID <- as.integer(MIDAS_imputed_data_list[[i]]$ID)   # Convert ID to integer
   MIDAS_imputed_data_list[[i]]$PPI <- as.numeric(as.character(MIDAS_imputed_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
-  MIDAS_imputed_data_list[[i]]$UM <- as.numeric(as.character(MIDAS_imputed_data_list[[i]]$UM)) - 1  # Convert PPI to numeric and reduce by 1
+  MIDAS_imputed_data_list[[i]]$UM <- as.numeric(as.character(MIDAS_imputed_data_list[[i]]$UM)) - 1  # Convert UM to numeric and reduce by 1
 }
 
 
 
 for (i in seq_along(missing_data_list)) {
   missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
-  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM)) - 1  # Convert PPI to numeric and reduce by 1
+  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM)) - 1  # Convert UM to numeric and reduce by 1
 }
 
 
@@ -1095,7 +1084,7 @@ for (i in seq_along(missing_data_list)) {
 for (i in seq_along(amelia_imputed_data_list)) {
   #amelia_imputed_data_list[[i]]$ID <- as.integer(amelia_imputed_data_list[[i]]$ID)   # Convert ID to integer
   amelia_imputed_data_list[[i]]$PPI <- as.numeric(as.character(amelia_imputed_data_list[[i]]$PPI))   # Convert PPI to numeric and reduce by 1
-  amelia_imputed_data_list[[i]]$UM <- as.numeric(as.character(amelia_imputed_data_list[[i]]$UM))   # Convert PPI to numeric and reduce by 1
+  amelia_imputed_data_list[[i]]$UM <- as.numeric(as.character(amelia_imputed_data_list[[i]]$UM))   # Convert UM to numeric and reduce by 1
 }
 
 
@@ -1201,7 +1190,7 @@ amelia_combined_data
 
 for (i in seq_along(missing_data_list)) {
   missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI))   # Convert PPI to numeric 
-  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM))  # Convert PPI to numeric 
+  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM))  # Convert UM to numeric 
 }
 
 
@@ -1504,10 +1493,10 @@ all_datasets <- list(
 dataset_names <- c(
   "Original Data",
   
-  # MICE datasets with missing percentages
-  paste0("MICE ", missing_percentages),
+  # Mice datasets with missing percentages
+  paste0("Mice ", missing_percentages),
   
-  # AMELIA datasets
+  # Amelia datasets
   paste0("Amelia ", missing_percentages),
   
   # MF datasets
@@ -1519,6 +1508,7 @@ dataset_names <- c(
   # MIDAS datasets
   paste0("MIDAS ", missing_percentages)
 )
+
 
 # Ensure that the number of datasets matches the number of names
 if (length(all_datasets) != length(dataset_names)) {
@@ -1930,14 +1920,14 @@ summary_stats <- combined_data %>%
     # Absolute Error with Standard Deviation
     AE_WT = sprintf("%.2f ± %.2f", mean(AE_WT, na.rm = TRUE), sd(AE_WT, na.rm = TRUE)),
     AE_CrCl = sprintf("%.2f ± %.2f", mean(AE_CrCl, na.rm = TRUE), sd(AE_CrCl, na.rm = TRUE)),
-    
+
     # Percentage Error with Standard Deviation
     PE_WT = sprintf("%.2f ± %.2f", mean(PE_WT, na.rm = TRUE), sd(PE_WT, na.rm = TRUE)),
     PE_CrCl = sprintf("%.2f ± %.2f", mean(PE_CrCl, na.rm = TRUE), sd(PE_CrCl, na.rm = TRUE)),
     
     # Percentage of Concordance
-    Concordance_PPI = sprintf("%.2f%%", mean(PPI, na.rm = TRUE) * 100),
-    Concordance_UM = sprintf("%.2f%%", mean(UM, na.rm = TRUE) * 100)
+    Concordance_PPI = sprintf("%.2f%%", mean(ConcordancePPI, na.rm = TRUE) * 100),
+    Concordance_UM = sprintf("%.2f%%", mean(ConcordanceUM, na.rm = TRUE) * 100)
   ) %>%
   ungroup()
 
@@ -1985,6 +1975,16 @@ doc <- read_docx() %>%
 print(doc, target = "Summary_Statistics_with_Concordance.docx")
 
 
+
+
+combined_data <- combined_data %>%
+  mutate(
+    Imputation_Method = recode(Imputation_Method,
+                               "amelia" = "Amelia",
+                               "mice" = "Mice")  # Ensure consistent capitalization
+  )
+
+
 # View the combined data frame
 print(combined_data)
 long_combined_data <- combined_data %>%
@@ -2000,6 +2000,8 @@ long_combined_data <- combined_data %>%
       labels = c("Absolute Error", "Percentage Error")  # New labels
     )
   )
+
+
 
 
 AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = Imputation_Method)) +
@@ -2036,7 +2038,7 @@ dev.off()
 # Assuming 'combined_data' already contains both PPI and UM variables
 
 combined_data <- combined_data %>%
-  rename(PPI = ConcordancePPI, UM = ConcordanceUM)
+  rename(PPI = Concordance_PPI, UM = Concordance_UM)
 
 # Count the number of TRUE/FALSE for PPI, grouped by Imputation_Method and Missing_Values
 concordance_summary_PPI <- combined_data %>%
@@ -2142,17 +2144,17 @@ merged_imputed_data_list <- c(
 )
 
 # Append final_data to the merged list
-merged_imputed_data_list$final_data <- final_data
+merged_imputed_data_list$final_data <- final_data_mice
 
 # Check the structure of the merged list (including final_data)
 str(merged_imputed_data_list)
 
 # Optionally, print the names of the datasets for verification
 names(merged_imputed_data_list) <- c(
-  paste0("mice_", seq_along(mice_imputed_data_list)),
+  paste0("Mice_", seq_along(mice_imputed_data_list)),
   paste0("MF_", seq_along(MF_imputed_data_list)),
   paste0("MIDAS_", seq_along(MIDAS_imputed_data_list)),
-  paste0("amelia_", seq_along(amelia_imputed_data_list)),
+  paste0("Amelia_", seq_along(amelia_imputed_data_list)),
   paste0("XGB_", seq_along(XGB_imputed_data_list)),
   "final_data"
 )
@@ -2280,18 +2282,6 @@ for (i in seq_along(merged_imputed_data_list)) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 # Define the base directory by removing the "Figures" part
 base_directory <- "D:/MOBILITE/1er papier - Simulation Covariables"
 
@@ -2371,130 +2361,6 @@ write.csv(combined_subset_data, "combined_subset_data.csv", row.names = FALSE)
 
 
 
-
-
-# Exclude final_data
-filtered_combined_data <- combined_subset_data %>%
-  filter(Imputation_Method != "final")  # Exclude final data
-
-# Reorder Missing_Percentage and Imputation_Method as factors
-filtered_combined_data$Missing_Percentage <- factor(filtered_combined_data$Missing_Percentage,
-                                                  levels = c("5% NA", "20% NA", "50% NA", "75% NA"))
-
-filtered_combined_data$Imputation_Method <- factor(filtered_combined_data$Imputation_Method,
-                                                 levels = c("amelia", "MF", "mice", "MIDAS", "XGB"))
-
-
-
-
-
-
-
-# Corrected function to match density with the histogram by dividing by the binwidth and add custom fill, spacing, and proper legend
-plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
-    binwidth_value <- ifelse(variable == "WT", 2, 2)  # Define binwidth
-    
-    ggplot(data, aes_string(x = variable)) +
-        # Histogram with appropriate binwidth
-        geom_histogram(aes(y = ..count../2.5, fill = Imputation_Method),  
-                       binwidth = binwidth_value,  
-                       color = "black", alpha = 0.7, show.legend = TRUE) +
-        
-        # Gaussian curve for each subset
-        stat_function(data = data,
-                      fun = function(x) {
-                          mean_val <- mean(data[[variable]], na.rm = TRUE)
-                          sd_val <- sd(data[[variable]], na.rm = TRUE)
-                          dnorm(x, mean = mean_val, sd = sd_val)*100
-                      }, 
-                      aes(linetype = "Gaussian Distribution", color = "Gaussian Distribution"), 
-                      size = 1, show.legend = TRUE) +
-        
-        # Density curve properly scaled by dividing by the binwidth
-        geom_density(aes(y = ..density..*100 , 
-                         linetype = "Density Estimate", color = "Density Estimate"),  
-                     size = 1, alpha = 0.5, show.legend = TRUE) +
-        
-        # Facet by Missing_Percentage and Imputation_Method with custom spacing
-        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
-        
-        # Add the color palette from ggsci
-        scale_fill_jco() +
-        
-        # Add manual legends for Gaussian and Density Estimate, both with solid lines and color differentiation
-        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Gaussian Distribution" = "solid")) +  
-        scale_color_manual(name = "Legend", values = c("Gaussian Distribution" = "blue", "Density Estimate" = "red")) + 
-        
-        labs(title = paste("Distribution of", variable_name),
-             x = variable_name,
-             y = "Count") +
-        
-        # Custom theme with spacing and legend
-        my_theme +
-        theme(
-            plot.title = element_text(hjust = 0.5, face = "bold"),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            strip.text = element_text(face = "bold"),
-            
-            # Add spacing between facets for better separation
-            panel.spacing = unit(1, "lines"),  
-            
-            # Adjust legend
-            legend.position = "top",
-            legend.key = element_rect(fill = "white", color = "black"), 
-            legend.title = element_text(face = "bold"),
-            legend.text = element_text(size = 12),
-            
-            # Add grey borders to each facet panel
-            panel.border = element_rect(color = "grey", fill = NA, size = 1),  
-            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
-        ) +
-        
-        # Custom guides for the legend
-        guides(
-            fill = guide_legend(title = "Imputation Method"),
-            linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),  
-            color = "none"
-        )
-}
-
-# Plot for WT
-WT_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "WT", "Weight (WT)")
-
-# Save the plot for WT
-png("WT_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(WT_Plot_fixed)
-dev.off()
-
-
-
-# Plot for CrCl
-CrCl_Plot_fixed <- plot_histogram_with_gaussian_and_density_fixed(filtered_combined_data, "CrCl", "Creatinine Clearance (CrCl)")
-
-
-# Save the plot for CrCl
-png("CrCl_Distribution_with_Gaussian_Density_Proper_Scaled_Spaced_with_Legend.png", width = 16, height = 9, units = 'in', res = 900)
-print(CrCl_Plot_fixed)
-dev.off()
-
-
-combined_plot <- ggarrange(
-  WT_Plot_fixed, 
-  CrCl_Plot_fixed,
-  nrow = 2,
-  common.legend = TRUE,  # Combine legends
-  labels = "AUTO"        # Add labels "A", "B", etc.
-)
-
-# Display the combined plot
-print(combined_plot)
-
-
-
-png("WT_CrCl_Distrib.png", width = 12, height = 16, units = 'in', res = 900)
-print(combined_plot)
-dev.off()
 
 OFVval <- read.csv2("D:/MOBILITE/1er papier - Simulation Covariables/OBJ/OBJ.csv")
 
@@ -2760,11 +2626,87 @@ png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/Shrinkage_custom_ad
 print(combined_plot)
 dev.off()
 
-# Compute the delta (difference) for each criterion and replace 0 with NA
+
+
+
+
+# Define which criteria we're interested in (OFV and BICc)
+log_likelihood_criteria <- c("OFV", "BICc")
+
+# Prepare data for plotting
+log_likelihood_data <- list()
+
+# Extract the log likelihood data (OFV and BICc) from each subfolder
+for (subfolder in names(all_data)) {
+  if ("log_likelihood" %in% names(all_data[[subfolder]])) {
+    log_likelihood_df <- all_data[[subfolder]]$log_likelihood
+    
+    # Ensure that the log_likelihood data has the required criteria
+    if ("OFV" %in% log_likelihood_df$criteria && "BICc" %in% log_likelihood_df$criteria) {
+      # Extract Missing_Percentage from folder names
+      missing_percentage <- ifelse(grepl("final_data", subfolder), "0%", 
+                                   ifelse(grepl("_1$", subfolder), "5%",
+                                          ifelse(grepl("_2$", subfolder), "20%",
+                                                 ifelse(grepl("_3$", subfolder), "50%", "75%"))))
+      
+      log_likelihood_values <- data.frame(
+        File = subfolder,
+        Base_Name = sub("_[0-9]+$", "", subfolder),  # Extract base name before the number
+        Missing_Percentage = missing_percentage,     # Use extracted Missing_Percentage
+        OFV = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "OFV"],
+        BICc = log_likelihood_df$importanceSampling[log_likelihood_df$criteria == "BICc"]
+      )
+      
+      log_likelihood_data[[subfolder]] <- log_likelihood_values
+    }
+  }
+}
+
+# Combine the data into one dataframe
+log_likelihood_combined <- do.call(rbind, log_likelihood_data)
+
+# Reorder the Missing_Percentage to start with 0%
+log_likelihood_combined$Missing_Percentage <- factor(
+  log_likelihood_combined$Missing_Percentage, 
+  levels = c("0%", "5%", "20%", "50%", "75%")
+)
+
+# Reshape the data to long format for plotting
+log_likelihood_long <- log_likelihood_combined %>%
+  pivot_longer(cols = c(OFV, BICc), names_to = "Criteria", values_to = "Value") %>%
+  filter(!is.na(Value))  # Remove rows with missing values
+
+# Compute the delta (difference) for each criterion and handle missing baselines
 log_likelihood_long <- log_likelihood_long %>%
   group_by(Criteria) %>%
-  mutate(Delta = Value - Value[Base_Name == "Original Data" & Missing_Percentage == "0%"],
-         Delta = ifelse(Delta == 0, NA, Delta))  # Replace 0 with NA
+  mutate(
+    # Extract the baseline value if it exists
+    Baseline = if (any(Base_Name == "final_data" & Missing_Percentage == "0%")) {
+      Value[Base_Name == "final_data" & Missing_Percentage == "0%"]
+    } else {
+      NA
+    },
+    # Compute Delta if Baseline is not NA
+    Delta = ifelse(!is.na(Baseline), Value - Baseline, NA),
+    # Replace 0 with NA
+    Delta = ifelse(Delta == 0, NA, Delta)
+  ) %>%
+  ungroup()
+
+log_likelihood_long <- log_likelihood_long %>%
+  mutate(
+    Base_Name = recode(
+      Base_Name,
+      "amelia" = "Amelia",
+      "mice" = "Mice",
+      "midas" = "MIDAS",  # Ensure MIDAS remains in capital letters
+      "xgb" = "XGB",      # Ensure XGB remains in capital letters
+      "final_data" = "Original Data"
+    )
+  )
+
+
+
 
 # Define the custom color mapping for each Base_Name
 jco_colors <- pal_jco("default")(6)  # Extract the first 6 jco colors
@@ -4198,40 +4140,77 @@ print(doc, target = "Pop Param Pri Metrics.docx")
 
 
 
-# Initialize an empty list to store data frames
+
+for (dataset_name in names(all_data)) {
+  # Access the population parameters and individual parameters for the dataset
+  pop_params <- all_data[[dataset_name]][["population_parameters"]]
+  ind_params <- all_data[[dataset_name]][["parameters"]]
+  
+  # Extract the required values from the population_parameters
+  Cl_pop <- pop_params$value[pop_params$parameter == "Cl_pop"]
+  V_pop <- pop_params$value[pop_params$parameter == "V_pop"]
+  ka_pop <- pop_params$value[pop_params$parameter == "ka_pop"]
+  beta_Cl_logtCrCl <- pop_params$value[pop_params$parameter == "beta_Cl_logtCrCl"]
+  beta_Cl_UM_1 <- exp(pop_params$value[pop_params$parameter == "beta_Cl_UM_1"])
+  beta_V_logtWT <- pop_params$value[pop_params$parameter == "beta_V_logtWT"]
+  beta_ka_PPI_1 <- exp(pop_params$value[pop_params$parameter == "beta_ka_PPI_1"])
+  
+  # Compute CLiap, KAiap, and VCiap for each individual
+  ind_params <- ind_params %>%
+    mutate(
+      CLpri = Cl_pop * (CrCl / 90)^beta_Cl_logtCrCl * beta_Cl_UM_1^UM,
+      VCpri = V_pop * (WT / 70)^beta_V_logtWT,
+      KApri = ka_pop * beta_ka_PPI_1^PPI
+    )
+  
+  # Update the parameters dataframe in the all_data list
+  all_data[[dataset_name]][["parameters"]] <- ind_params
+}
+
+# Check one dataset to ensure the computation worked
+head(all_data[["amelia_1"]][["parameters"]])
+
+
+
+
 combined_data_list <- list()
 
-# Loop over each dataset in all_data
 for (dataset_name in names(all_data)) {
-  # Skip 'final_data' for now
-  if (dataset_name == "final_data") next
-  
-  # Extract the dataset
-  dataset <- all_data[[dataset_name]]
-  
-  # Check if 'parameters' component exists
-  if ("parameters" %in% names(dataset)) {
-    # Extract the 'parameters' data frame
-    parameters_df <- dataset$parameters
+    if (dataset_name == "final_data") next
     
-    # Check if 'CLpri', 'VCpri', 'KApri' columns exist
-    if (all(c("CLpri", "VCpri", "KApri") %in% names(parameters_df))) {
-      # Create a data frame with necessary columns
-      temp_df <- parameters_df %>%
-        select(ID = id, CLpri, VCpri, KApri)
-      
-      # Add 'Imputation_Method' and 'Missing_Percentage' columns based on the dataset name
-      temp_df <- temp_df %>%
-        mutate(
-          Imputation_Method = gsub("_.*", "", dataset_name),
-          Missing_Percentage = gsub(".*_", "", dataset_name)
-        )
-      
-      # Append to the list
-      combined_data_list[[dataset_name]] <- temp_df
+    dataset <- all_data[[dataset_name]]
+    print(paste("Processing dataset:", dataset_name))
+    
+    if ("parameters" %in% names(dataset)) {
+        print("parameters exists")
+        
+        parameters_df <- dataset$parameters
+        
+        # Check if the mode columns exist
+        if (all(c("Cl_mode", "V_mode", "ka_mode") %in% names(parameters_df))) {
+            print("Required columns exist")
+            
+            # Select and rename columns, adding Imputation_Method and Missing_Percentage
+            temp_df <- parameters_df %>%
+                select(ID = id, CLpri = CLpri, VCpri = VCpri, KApri = KApri) %>%
+                mutate(
+                    Imputation_Method = gsub("_.*", "", dataset_name),
+                    Missing_Percentage = gsub(".*_", "", dataset_name)
+                )
+            
+            # Add to the combined data list
+            combined_data_list[[dataset_name]] <- temp_df
+        } else {
+            print("Required columns missing")
+        }
+    } else {
+        print("parameters missing")
     }
-  }
 }
+
+# Check the output
+str(combined_data_list)
+
 
 # Handle 'final_data' separately
 if ("final_data" %in% names(all_data)) {
@@ -4297,156 +4276,6 @@ combined_mlx_val <- combined_mlx_val %>%
     Imputation_Method = factor(Imputation_Method, levels = c("Amelia", "MF", "Mice", "MIDAS", "XGB")),
     Missing_Percentage = factor(Missing_Percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA"))
   )
-
-
-plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, variable_name) {
-  
-  
-  # Set binwidth based on the variable
-  binwidth_value <- if (variable == "CLpri") 0.2 else if (variable == "VCpri") 1 else 0.1
-  
-  # Filter out non-positive values for log-transformation
-  data_filtered <- data %>%
-    filter(!!sym(variable) > 0)
-  
-  # Compute per-group parameters for log-normal distribution
-  subset_params <- data_filtered %>%
-    group_by(Missing_Percentage, Imputation_Method) %>%
-    summarize(
-      meanlog = mean(log(!!sym(variable)), na.rm = TRUE),
-      sdlog = sd(log(!!sym(variable)), na.rm = TRUE),
-      count = n(),
-      .groups = "keep"  # Retain grouping
-    )
-  
-  # Create a grid of x-values
-  x_grid <- seq(min(data_filtered[[variable]], na.rm = TRUE), max(data_filtered[[variable]], na.rm = TRUE), length.out = 100)
-  
-  # Compute log-normal density values per group
-  lognormal_data <- subset_params %>%
-    group_modify(~ {
-      meanlog <- .x$meanlog[1]
-      sdlog <- .x$sdlog[1]
-      count <- .x$count[1]
-      # Handle cases where sdlog is NA or zero
-      if (is.na(sdlog) || sdlog == 0 || count < 2) {
-        return(data.frame(
-          x = numeric(0),
-          y = numeric(0)
-        ))
-      }
-      data.frame(
-        x = x_grid,
-        y = dlnorm(x_grid, meanlog, sdlog) * count * binwidth_value
-      )
-    })
-  
-  # Compute density estimates per group
-  density_data <- data_filtered %>%
-    group_by(Missing_Percentage, Imputation_Method) %>%
-    group_modify(~ {
-      .x_group <- .x
-      if(nrow(.x_group) < 2){
-        return(data.frame(
-          x = numeric(0),
-          y = numeric(0)
-        ))
-      }
-      dens <- density(.x_group[[variable]], na.rm = TRUE)
-      data.frame(
-        x = dens$x,
-        y = dens$y * length(.x_group[[variable]]) * binwidth_value
-      )
-    })
-  
-  # Define your custom theme if not already defined
-  my_theme <- theme_bw()
-  
-  # Create the base plot
-  plot <- ggplot(data_filtered, aes_string(x = variable)) +
-    # Histogram
-    geom_histogram(aes(y = ..count.., fill = Imputation_Method),
-                   binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
-    # Log-normal curve per group
-    geom_line(data = lognormal_data,
-              aes(x = x, y = y, color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
-              size = 1, show.legend = TRUE) +
-    # Density curve per group
-    geom_line(data = density_data,
-              aes(x = x, y = y, color = "Density Estimate", linetype = "Density Estimate"),
-              size = 1, alpha = 0.5, show.legend = TRUE) +
-    # Facet by Missing_Percentage and Imputation_Method
-    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
-    # Add the color palette from ggsci
-    scale_fill_jco() +
-    # Add manual legends for Log-normal and Density Estimate
-    scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")) +
-    scale_color_manual(name = "Legend", values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")) +
-    labs(title = paste("Distribution of", variable_name),
-         x = variable_name,
-         y = "Count") +
-    # Custom theme with spacing and legend
-    my_theme +
-    theme(
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      axis.title = element_text(size = 16),
-      axis.text = element_text(size = 14),
-      strip.text = element_text(face = "bold"),
-      panel.spacing = unit(1, "lines"),
-      legend.position = "top",
-      legend.key = element_rect(fill = "white", color = "black"),
-      legend.title = element_text(face = "bold"),
-      legend.text = element_text(size = 12),
-      panel.border = element_rect(color = "grey", fill = NA, size = 1),
-      strip.background = element_rect(fill = "grey", color = "grey", size = 1)
-    ) +
-    # Custom guides for the legend
-    guides(
-      fill = guide_legend(title = "Imputation Method"),
-      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
-      color = "none"
-    )
-  
-  return(list(
-    plot = plot,
-    lognormal_data = lognormal_data,
-    density_data = density_data
-  ))
-}
-
-
-# Example usage for CL
-CL_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "CLpri", "CL")
-V_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "VCpri", "V")
-KA_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "KApri", "KA")
-
-png("PK_param_Prior_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
-ggarrange(KA_Plot_fixed$plot,V_Plot_fixed$plot,CL_Plot_fixed$plot,nrow=3,common.legend=TRUE)
-dev.off()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -4584,10 +4413,25 @@ for (i in seq_along(mlxtran_files)) {
   # Store the plot in the list
   vpc_plots[[i]] <- vpc_plot
 }
-# Modify the title of plot 5 to "Original 0% NA"
+# Modify the title of plot 5 to "Original Data"
 vpc_plots[[5]] <- vpc_plots[[5]] + ggtitle("Original with 0% NA")
 
-
+# Loop through each plot and update the titles
+for (i in seq_along(vpc_plots)) {
+  # Extract the current title
+  current_title <- vpc_plots[[i]]$labels$title
+  
+  # Update the titles dynamically
+  updated_title <- current_title %>%
+    str_replace("Original with 0% NA", "Original Data") %>%
+    str_replace("amelia", "Amelia") %>%
+    str_replace("mice", "Mice") %>%
+    str_replace("midas", "MIDAS") %>%
+    str_replace("xgb", "XGB")
+  
+  # Apply the updated title back to the plot
+  vpc_plots[[i]] <- vpc_plots[[i]] + ggtitle(updated_title)
+}
 
 
 plot_indices <- c(
@@ -4606,7 +4450,7 @@ combined_plot <- ggarrange(
 
 
 
-png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 12, height = 12, units = 'in', res = 900)
+png("D:/MOBILITE/1er papier - Simulation Covariables/Figures/pcVPC.png", width = 16, height = 12, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
@@ -4788,7 +4632,7 @@ combined_plot <- ggarrange(
   individual_plot,
   ncol = 2,
   labels = c("A", "B"),
-  align = "hv"
+  align = "hv", common.legend=TRUE
 )
 
 # Add an overall title (optional)
@@ -4869,68 +4713,56 @@ combined_stats <- combined_stats %>%
   select(Imputation_Method, Missing_Percentage, Prediction_Type,
          MAE, MPE, RMSE, RMSE_percent, R_squared)
 
+
+combined_stats <- combined_stats %>%
+  mutate(across(c(R_squared, RMSE, RMSE_percent, MAE, MPE), ~ round(.x, 3)))
+
 # View combined statistics
 print(combined_stats)
 
 
-flextable_table <- flextable(combined_stats)
-
-# Merge vertically where values are the same for Prediction_Type, Missing_Percentage, and Imputation_Method
-flextable_table <- flextable_table %>%
-  merge_v(j = c("Missing_Percentage", "Imputation_Method"))
-  merge_h(j = c("Prediction_Type"))
-
-# Apply a simple box theme to the table
-flextable_table <- flextable_table %>%
-  theme_box()
-
-# Set custom header labels for better readability
-flextable_table <- flextable_table %>%
-  set_header_labels(
-    Imputation_Method = "Imputation Method",
-    Missing_Percentage = "Missing Percentage",
-    Prediction_Type = "Prediction Type",
-    MAE = "MAE",
-    MPE = "MPE",
-    RMSE = "RMSE",
-    RMSE_percent = "RMSE%",
-    R_squared = "R²"
+# Reshape the data: explicitly maintain alignment for each metric and prediction type
+wide_combined_stats <- combined_stats %>%
+  pivot_wider(
+    names_from = Prediction_Type,
+    values_from = c(MAE, MPE, RMSE, RMSE_percent, R_squared),
+    names_glue = "{Prediction_Type}_{.value}"
   )
 
-# Set font size to 10 and font to Times New Roman for all parts of the table
-flextable_table <- flextable_table %>%
-  fontsize(size = 10, part = "all") %>%
-  font(part = "all", fontname = "Times New Roman")
+# Ensure column names align correctly by reviewing wide_combined_stats
+col_order <- c(
+  "Imputation_Method", "Missing_Percentage",
+  "Population_MAE", "Population_MPE", "Population_RMSE", "Population_RMSE_percent", "Population_R_squared",
+  "Individual_MAE", "Individual_MPE", "Individual_RMSE", "Individual_RMSE_percent", "Individual_R_squared"
+)
 
-# Make the headers bold
-flextable_table <- flextable_table %>%
-  bold(part = "header")
+wide_combined_stats <- wide_combined_stats[, col_order]
 
-# Center-align all text in the table
-flextable_table <- flextable_table %>%
-  align(align = "center", part = "all")
+# Create the flextable
+flextable_table <- flextable(wide_combined_stats)
 
-# Set custom column widths for better readability
+# Add two-level header: Population and Individual first, metrics below
 flextable_table <- flextable_table %>%
-  width(j = c("Prediction_Type"), width = 2) %>%
-  width(j = c("Imputation_Method", "Missing_Percentage"), width = 1.5) %>%
-  width(j = c("MAE", "MPE", "RMSE", "RMSE_percent", "R_squared"), width = 1)
+  set_header_df(mapping = data.frame(
+    col_keys = colnames(wide_combined_stats),
+    # First row of headers: Group by Population and Individual
+    Population_Group = c(
+      "Imputation Method", "Missing Percentage", 
+      rep("Population", 5), rep("Individual", 5)
+    ),
+    # Second row of headers: Split by Metrics
+    Metric_Group = c(
+      "", "", "MAE", "MPE", "RMSE", "RMSE_percent", "R_squared",
+      "MAE", "MPE", "RMSE", "RMSE_percent", "R_squared"
+    )
+  )) %>%
+  merge_v(j = c("Imputation_Method", "Missing_Percentage")) %>%
+  merge_h(part = "header") %>%
+  autofit() %>%
+  theme_vanilla()
 
-# Set inner horizontal borders
-flextable_table <- flextable_table %>%
-  border_inner_h(border = fp_border(color = "gray", width = 1))
-
-# Set outer borders
-flextable_table <- flextable_table %>%
-  border_outer(border = fp_border(color = "black", width = 1.5))
-
-# Add padding for better readability
-flextable_table <- flextable_table %>%
-  padding(padding = 5, part = "all")
-
-# Add a custom footer line
-flextable_table <- flextable_table %>%
-  add_footer_lines(values = "This table summarizes the statistical metrics for each combination of Prediction Type, Imputation Method, and Missing Percentage.")
+# Print the flextable
+flextable_table
 
 # Create a new Word document
 doc <- read_docx()
