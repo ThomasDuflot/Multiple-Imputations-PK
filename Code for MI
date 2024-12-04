@@ -2779,7 +2779,20 @@ print(combined_log_likelihood_plot)
 dev.off()
 
 
+# Filter out rows with 0% NA
+filtered_data <- log_likelihood_long %>%
+  filter(Missing_Percentage != "0%")
 
+# Compute mean and standard deviation of Delta for each Missing_Percentage
+summary_stats <- filtered_data %>%
+  group_by(Missing_Percentage) %>%
+  summarise(
+    mean = mean(Delta, na.rm = TRUE),
+    sd = sd(Delta, na.rm = TRUE)
+  )
+
+# View the summary stats
+print(summary_stats)
 
 
 # Prepare data for plotting
