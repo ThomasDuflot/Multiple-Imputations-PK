@@ -25,6 +25,7 @@ library(ggh4x)
 library(purrr)
 library(flextable)
 library(officer)
+library(colorBlindness)
 
 set.seed(123)
 # Define the means and standard deviations for each parameter
@@ -187,7 +188,628 @@ Report( optimizationPopFIM, outputPath, outputFile, plotOptions )
 
 
 
+### Part from L. FAYETTE (IAME) ###
+rootDir = getwd()
+currentFolder = file.path(rootDir, "Propre_pour_git")
 
+
+# Create folder for PFIM results
+pfimResultFolder = "PFIM_results_6_1"
+pfimResultGeneralPath = file.path(currentFolder, pfimResultFolder)
+dir.create(pfimResultGeneralPath)
+
+################################################################################
+# ... load from PFIM6.1_beta_cov https://zenodo.org/records/14035205
+
+USER_DEFINED_FUNCT = FALSE # Model evaluation in PFIM does not rely on a user defined function
+PARRALEL_FIM = FALSE # No parallel computation in PFIM
+
+pfimCovariatePath = file.path(rootDir, "PFIM_6_1_beta_cov")
+devtools::load_all(pfimCovariatePath)
+
+
+################################################################################
+# ... function for saving tabs and figures
+
+write_tab_latex <- function(my_tab, savetitle, path){
+  
+  my_tab_path = paste0(path, "/", savetitle, "_latex.tex")
+  nCol = ncol(my_tab)
+  stringNcol = paste(rep("c", times = nCol), collapse = " ")
+  
+  sink(my_tab_path)
+  cat("\\begin{table}[] 
+\\centering
+\\rowcolors{2}{lightgray!40}{}
+\\caption{}
+")
+  cat(paste0("\\begin{tabular}{", stringNcol, "}"))
+  cat("\\rowcolor{lightgray}")
+  
+  sink()
+  
+  write.table(my_tab, file = my_tab_path,
+              row.names = FALSE,
+              quote = FALSE,
+              sep = " & ",
+              eol = " \\\\ \n",
+              append = TRUE)
+  
+  sink(my_tab_path, append = TRUE)
+  
+  
+  cat("\\end{tabular}
+      \\label{tab:}
+      \\end{table}")
+  
+  sink()
+  
+  closeAllConnections()
+  
+  
+}
+
+save_my_fig <- function(plot, fig_file_name, save_path, 
+                        width = 4, height = 4){
+  png_name = paste0(fig_file_name, ".png")
+  png(file.path(save_path, png_name), width = width, height = height, units = 'in', res = 900) 
+  print(plot)
+  dev.off()
+  
+}
+
+my_theme = theme_bw(base_size = 11) +
+  theme( 
+    legend.key.size = unit(1,"lines"),
+    legend.margin=margin(t = 0, r = 0, b = 0, l = 0, "cm"), 
+    legend.position="right", 
+    plot.margin = margin(t = 0, r = 0, b = 0, l = 0, "cm"),
+    legend.box.margin=margin(-1,0,0,0, "cm"),
+    legend.title=element_text(size=rel(1)),
+    legend.text=element_text(size=rel(0.9)), 
+    axis.text.y=element_text(size=rel(0.8)),
+    axis.text.x=element_text(size=rel(0.8)),
+    axis.title=element_text(size=rel(1)),
+    strip.text.x = element_text(size = rel(0.9)) #facet
+  ) 
+################################################################################
+# --- PFIM Set Up
+
+# --------------------------------------
+# model equations
+# --------------------------------------
+modelEquations = list(
+  
+  outcomes = list( "RespPK" ),
+  
+  equations = list("RespPK" = "dose_RespPK/V * ka/(ka - Cl/V) * (exp(-Cl/V * t) - exp(-ka * t))") )
+
+# --------------------------------------
+# model parameters
+# --------------------------------------
+
+mu_Cl = 1
+mu_V = 10
+mu_ka = 1
+
+WT_VC = 1 # Weight on Vc ()
+CrCl_CL = -0.8 # Creatinine Clearance on CL
+PPI_KA = log(0.5) # Effect of Proton Pump Inhibitor on KA
+UM_CL = log(2) # Effect of UM on CL
+
+modelParameters = list(
+  ModelParameter( name = "Cl",   distribution = LogNormal( mu = mu_Cl, omega = sqrt(0.09) ) ),
+  ModelParameter( name = "V",    distribution = LogNormal( mu = mu_V, omega = sqrt(0.09) ),),
+  ModelParameter( name = "ka",   distribution = LogNormal( mu = mu_ka, omega = sqrt(0.09) ) ),
+  
+  ModelParameter( name = "beta_V_WT",
+                  distribution = Normal( mu = WT_VC , omega = 0 ), fixedOmega = TRUE, covariateEffect = TRUE),
+  ModelParameter( name = "beta_Cl_CLCR",
+                  distribution = Normal( mu = CrCl_CL , omega = 0 ), fixedOmega = TRUE, covariateEffect = TRUE ),
+  ModelParameter( name = "beta_Cl_UM",
+                  distribution = Normal( mu = UM_CL , omega = 0 ), fixedOmega = TRUE, covariateEffect = TRUE ),
+  ModelParameter( name = "beta_ka_PPI",
+                  distribution = Normal( mu = PPI_KA , omega = 0 ), fixedOmega = TRUE, covariateEffect = TRUE )
+  
+)
+
+# --------------------------------------
+# model covariate relationship
+# --------------------------------------
+modelRelationships = list(
+  ModelRelationship( name = "beta_V_WT", param = "V", cov = "WT", relationship = "Exp" ),
+  ModelRelationship( name = "beta_Cl_CLCR", param = "Cl", cov = "CLCR", relationship = "Exp" ),
+  ModelRelationship( name = "beta_Cl_UM", param = "Cl", cov = "UM", relationship = "Exp" ),
+  ModelRelationship( name = "beta_ka_PPI", param = "ka", cov = "PPI", relationship = "Exp")
+)
+
+# --------------------------------------
+# error model
+# --------------------------------------
+errorModelRespPK = Combined1( outcome = "RespPK", sigmaInter = 0.10 , sigmaSlope = 0.15  )
+modelError = list( errorModelRespPK )
+
+# --------------------------------------
+# Arm
+# --------------------------------------
+
+## administration & multi-doses
+administrationRespPK = Administration( outcome = "RespPK",
+                                       tau = c(8),
+                                       dose = c( 100 ) )
+
+## sampling times
+samplingTimesRespPK = SamplingTimes( outcome = "RespPK",
+                                     samplings = c(0.25, 0.5, 4, 36, 40)) #  c( 0, 2, 12, 24, 40 ) )
+
+## arms
+arm1 = Arm( name = "BrasTest",
+            size = 100,
+            administrations = list( administrationRespPK ) ,
+            samplingTimes   = list( samplingTimesRespPK ) )
+
+
+
+# --------------------------------------
+# Covariates
+# --------------------------------------
+
+# WT : 70 : Weight (kg)
+# CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
+# PPI : 0 : PPI intake or not
+# UM : 0 : Ultrarapid metabolizer
+
+mean_CLCR = 90
+mean_WT = 70
+
+sd_CLCR = 15
+sd_WT = 15
+
+
+PPI.P0 = 0.5 # Proportion of PPI=0
+PPI.P1 = 1 - PPI.P0 # Proportion of PPI=1
+
+UM.P0 = 0.5 # Proportion of UM=0
+UM.P1 = 1 - UM.P0 # Proportion of UM=1
+
+
+# Définir les moyennes et écarts-types pour chaque paramètre
+Height <- 170  # cm
+Height_sd <- 10
+
+WT <- 70  # kg
+WT_sd <- 15
+
+Alb <- 42  # g/L
+Alb_sd <- 4
+
+CrCl <- 90  # mL/min/1.73m2
+CrCl_sd <- 15
+
+Age <- 50  # ans
+Age_sd <- 15
+
+# Matrice de corrélation entre les paramètres
+# Ajout de l'Age avec des corrélations hypothétiques avec Poids, Albumine et Fonction rénale
+cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
+                       0.7, 1, 0, 0, 0.3,   # WT
+                       0, 0, 1, 0.5, -0.2,  # ALB
+                       0, 0, 0.5, 1, -0.4,  # CrCl
+                       0.2, 0.3, -0.2, -0.4, 1), # Age
+                     nrow=5, byrow=TRUE)
+
+# Moyennes des paramètres dans le même ordre que la matrice de corrélation
+moyennes <- c(Height, WT, Alb, CrCl, Age)
+
+# Écarts-types des paramètres
+sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
+
+# Calcul de la matrice de covariance à partir de la matrice de corrélation et des écarts-types
+cov_matrix <- cor_matrix * (sds %*% t(sds))
+
+# Générer MC=1000 patients avec les distributions corrélées
+set.seed(123)  # Pour la reproductibilité
+MC = 1000
+sim_data <- mvrnorm(n = MC, mu = moyennes, Sigma = cov_matrix)
+
+sim_data.df = data.frame(sim_data)
+colnames(sim_data.df) = c("Height", "WT", "Alb", "CLCR", "Age")
+head(sim_data.df)
+
+PFIM_covariates.df = sim_data.df %>%
+  dplyr::select(WT, CLCR) %>%
+  mutate(WT = log(WT/mean_WT),
+         CLCR = log(CLCR/90))
+
+PFIM_covariates.df$PPI = rbinom(MC, size = 1, prob = PPI.P1)
+PFIM_covariates.df$UM = rbinom(MC, size = 1, prob = UM.P1)
+
+PFIM_covariates.df = PFIM_covariates.df %>% 
+  dplyr::select(CLCR, WT, PPI, UM)
+
+
+logtCLCR_ref = 0
+logtCLCR_P90 = log(qnorm(0.9, mean_CLCR, sd_CLCR)/mean_CLCR)
+logtCLCR_P10 = log(qnorm(0.1, mean_CLCR, sd_CLCR)/mean_CLCR)
+
+logtWT_ref = 0
+logtWT_P90 = log(qnorm(0.9, mean_WT, sd_WT)/mean_WT)
+logtWT_P10 = log(qnorm(0.1, mean_WT, sd_WT)/mean_WT)
+
+
+list_CovariateForRatio = list(
+  #...Continuous
+  "CLCR" = CovariateForRatio(cov = "CLCR",
+                             relationship = "Exp",
+                             ref = logtCLCR_ref,
+                             values = c(logtCLCR_P90, logtCLCR_P10),
+                             names = c("P90", "P10")
+  ),
+  "WT"= CovariateForRatio(cov = "WT",
+                          relationship = "Exp",
+                          ref = logtWT_ref,
+                          values = c(logtWT_P90, logtWT_P10),
+                          names = c("P90", "P10")
+  ),
+  
+  #...Discrete
+  "PPI" = CovariateForRatio(cov = "PPI",
+                            relationship = "Exp",
+                            ref = 0,
+                            values = c(1),
+                            names = c("PPI")
+  ),
+  "UM" = CovariateForRatio(cov = "UM",
+                           relationship = "Exp",
+                           ref = 0,
+                           values = c(1),
+                           names = c("UM")
+  )
+)
+
+CovariateOrder = c( "CLCR", "WT", "PPI", "UM" )
+RatioOrder = c( "CLCR on Cl, P10", "CLCR on Cl, P90",
+                "WT on V, P10", "WT on V, P90",
+                "PPI on ka", "UM on Cl" )
+
+
+#CovariatePop
+CovariatePopType = "sampled"
+covariatePop = CovariatePop(type = CovariatePopType,
+                            data = PFIM_covariates.df,
+                            MC = MC)
+
+# --------------------------------------
+# Design
+# --------------------------------------
+design1 = Design( name = "design1",
+                  arms = list( arm1 ),
+                  covariates = covariatePop )
+
+################################################################################
+# --- Run Evaluation
+
+# --------------------------------------
+# Evaluation
+# --------------------------------------
+evaluation.Data = Evaluation( name = "Rouen - Covariates integration: data",
+                              modelEquations = modelEquations,
+                              modelParameters = modelParameters,
+                              modelRelationships = modelRelationships,
+                              modelError = modelError,
+                              outcomes = list( "RespPK"),
+                              designs = list( design1 ),
+                              fim = "population" )
+
+evaluation.Data = run( evaluation.Data )
+
+show( evaluation.Data )
+
+saveEvaluationFIMpath = file.path(pfimResultGeneralPath, "evaluationFIM_Data.RData")
+save(evaluation.Data, file = saveEvaluationFIMpath)
+
+
+# --------------------------------------
+# Results
+# --------------------------------------
+
+resPFIM_Ninit = tableRes(evaluation.Data, LaTex = TRUE)
+
+PredSE = resPFIM_Ninit 
+
+savetitle = "PredSE"
+write_tab_latex(PredSE, savetitle, pfimResultGeneralPath)
+
+################################################################################
+#--- Important constants
+
+alphalevel.signif = 0.05
+alphalevel.relev = 0.1
+
+ratioSup = 1.25
+ratioInf = 0.80
+
+desiredPowerSignif = 0.8
+desiredPowerRelev = 0.8
+
+# --------------------------------------
+# Power computation
+# --------------------------------------
+
+powerSignif = powerSignificance(evaluation.Data, alphalevel.signif)
+powerSignif.df = data.frame(Parameter = names(powerSignif),
+                            PowerSignif = as.numeric(powerSignif))
+
+save(powerSignif.df, file = file.path(pfimResultGeneralPath, paste0("powerSignif.df", ".RData")))
+
+powerSignif.df_Latex = powerSignif.df %>%
+  rowwise() %>%
+  mutate(Parameter = gsub("beta, ", "\\beta_{", names_to_latex(Parameter), fixed=TRUE)) %>%
+  rename("P_{Signif}" = PowerSignif)
+
+savetitle = "PowerSignificance"
+write_tab_latex(powerSignif.df_Latex, savetitle, pfimResultGeneralPath)
+
+
+CI_ratio_Latex = list_ciRatioToDftoPlot(ciRatio(evaluation.Data, alphalevel.relev,  list_CovariateForRatio), LaTex = T)
+savetitle = "CIratios"
+write_tab_latex(CI_ratio_Latex, savetitle, pfimResultGeneralPath)
+
+
+powerRelevance = powerRelevanceRatio(evaluation.Data, alphalevel.relev, ratioInf, ratioSup, list_CovariateForRatio )
+powerRelevance.df = list_CovariateForRatioToDftoPlot(powerRelevance)
+
+save(powerRelevance.df, file = file.path(pfimResultGeneralPath, paste0("powerSignif", ".RData")))
+
+
+powerRelevance.df_Latex = list_CovariateForRatioToDftoPlot(powerRelevance, LaTex = TRUE) %>%
+  rowwise() %>%
+  mutate(Ratio = ifelse(!grepl(Names, Covariate, fixed=TRUE),
+                        paste0(Covariate, ", (", Names, ")"),
+                        Covariate) ) %>%
+  mutate(PRelev = round(PRelev, 2)) %>%
+  arrange(Ratio) %>%
+  select(Ratio, PRelev) %>%
+  rename("P_{relev}" = PRelev)
+
+savetitle = "PowerRelevance"
+write_tab_latex(powerRelevance.df_Latex, savetitle, pfimResultGeneralPath)
+
+
+
+# --------------------------------------
+# Number of subjects needed
+# --------------------------------------
+sujSgnif = subjectsPowerSignificance(evaluation.Data, alphalevel.signif, desiredPowerSignif)
+
+sujSgnif.df = data.frame(Parameter = names(sujSgnif),
+                         N = as.vector(sujSgnif))
+save(sujSgnif.df, file = file.path(pfimResultGeneralPath, paste0("NneededSignificance", ".RData")))
+
+sujSgnif.df_Latex = sujSgnif.df %>%
+  rowwise() %>%
+  mutate(
+    Parameter = names_to_latex(Parameter),
+    N = ceiling(N)
+  )
+
+savetitle = "NneededSignificance"
+write_tab_latex(sujSgnif.df_Latex, savetitle, pfimResultGeneralPath)
+
+
+sujRelev = subjectsPowerRelevance(evaluation.Data, alphalevel.relev,
+                                  desiredPowerRelev,
+                                  ratioInf, ratioSup,
+                                  list_CovariateForRatio)
+
+sujRelev.df = data.frame(Ratio = names(sujRelev),
+                         N = as.vector(unlist(sujRelev)))
+save(sujRelev.df, file = file.path(pfimResultGeneralPath, paste0("NneededRelevance", ".RData")))
+
+sujRelev.df_Latex = sujRelev.df %>%
+  rowwise() %>%
+  mutate(
+    Ratio = paste0("", gsub(", ", ", ", Ratio, fixed=TRUE), ""),
+    Ratio = gsub("P10", "(P10)", Ratio, fixed=TRUE),
+    Ratio = gsub("P90", "(P90)", Ratio, fixed=TRUE),
+    N = ceiling(N)
+  )  %>%
+  arrange(Ratio)
+
+savetitle = "NneededRelevance"
+write_tab_latex(sujRelev.df_Latex, savetitle, pfimResultGeneralPath)
+
+CI_andPower_andN = left_join(left_join(CI_ratio_Latex, powerRelevance.df_Latex),
+                             sujRelev.df_Latex)
+savetitle = "Relevance_CI_Power_N"
+write_tab_latex(CI_andPower_andN, savetitle, pfimResultGeneralPath)
+
+################################################################################
+# --- Plot Power as a function of N
+
+N_list = seq(1, 200, 1) # N to test
+N_init = 100 # N used in evaluation
+
+q.1_alpha2_Significance = qnorm(p= 1-alphalevel.signif/2, 0, 1)
+q.1_alpha2_CIratio = qnorm(p= 1-alphalevel.relev/2, 0, 1)
+
+nCov = 4
+df_for_power_Ninit =  tableRes(evaluation.Data)[1:nCov, ] %>%
+  mutate(Name = gsub("\u03bc_", "", Parameter)) %>%
+  rename(
+    Values = Value
+  ) %>%
+  select(-Parameter, -RSE)
+
+df_for_power_Ninit$Covariate = c("CLCR", "UM", "PPI", "WT")
+df_for_power_Ninit$Parameter = c("Cl", "Cl", "ka", "V")
+
+#---Significance
+powerSignificance_Ninit = df_for_power_Ninit %>%
+  rowwise() %>%
+  mutate(statTest = Values/SE,
+         PSignificance = round(1 - pnorm(q.1_alpha2_Significance - statTest , mean = 0, sd = 1) + pnorm(-q.1_alpha2_Significance - statTest , mean = 0, sd = 1),2)
+  )
+
+
+powerEquivalenceRatio_Empirical <- function(df, alphalevel, ratioInf, ratioSup, list_CovariateForRatio) {
+  
+  list_PRelev = list()
+  
+  q.1_alpha2 = qnorm(1-alphalevel/2, mean = 0, sd = 1) 
+  
+  
+  values.covariates = df$Values
+  SE.covariates = df$SE
+  
+  covariates = df$Covariate
+  relationships = df$Name
+  parameters = df$Parameter
+  
+  Nrelations = length(relationships)
+  
+  for(r in 1:Nrelations){
+    covEffect = values.covariates[r]
+    se = SE.covariates[r]
+    
+    covForRatio = list_CovariateForRatio[[covariates[r]]]
+    
+    nameRelationShip = paste0(covariates[r], " on ", parameters[r])
+    
+    list_PRelev[[nameRelationShip]] = covForRatio
+    list_PRelev[[nameRelationShip]]@cov = nameRelationShip
+    
+    ref.cov = covForRatio@ref
+    cov.values = covForRatio@values
+    
+    nCov.values = length(cov.values)
+    
+    cov.PRelev = rep(NA, times = nCov.values)
+    
+    
+    for(c in 1:nCov.values){
+      if(nCov.values==1){
+        Zi = cov.values
+      }else{
+        Zi = cov.values[c]
+      }
+      
+      Zi_Z_ref = Zi - ref.cov
+      
+      if(Zi_Z_ref>0){
+        Bsup = log(ratioSup)/Zi_Z_ref
+        Binf = log(ratioInf)/Zi_Z_ref
+      }else{
+        Bsup = log(ratioInf)/Zi_Z_ref
+        Binf = log(ratioSup)/Zi_Z_ref
+      }
+      
+      
+      PRelev = 1 - pnorm( q.1_alpha2 - (covEffect - Bsup)/se ,  mean = 0, sd = 1) +  pnorm(-q.1_alpha2 - (covEffect-Binf)/se,  mean = 0, sd = 1) 
+      
+      
+      cov.PRelev[c] = PRelev
+      
+    }
+    
+    
+    
+    list_PRelev[[nameRelationShip]]@PRelev = cov.PRelev
+    
+  }
+  
+  return(list_PRelev)
+  
+}
+
+
+#---equivalence
+PowerEquivalenceRatio_Ninit = list_CovariateForRatioToDftoPlot(powerEquivalenceRatio_Empirical(df_for_power_Ninit, alphalevel.relev,  ratioInf, ratioSup, list_CovariateForRatio))
+PowerEquivalenceRatio_Ninit = PowerEquivalenceRatio_Ninit %>%
+  rename(PRelevance = PRelev)
+
+
+allSignificance_df = data.frame(matrix(data = 0, ncol = 4, nrow=0))
+colnames(allSignificance_df) = c("Covariate", "PSignificance", "N")
+
+allEquivalence_df = data.frame(matrix(data = 0, ncol = 5, nrow=0))
+colnames(allEquivalence_df) = c("Covariate", "Names", "PRelevance",  "N")
+
+for(N in N_list){
+  
+  # df for power N
+  df_for_power_N = df_for_power_Ninit %>% mutate(
+    SE = sqrt(N_init/N)*SE
+  )
+  
+  # Power Significance test
+  powerSignificance_N = df_for_power_N %>%
+    rowwise() %>%
+    mutate(statTest = Values/SE,
+           PSignificance = round(1 - pnorm(q.1_alpha2_Significance - statTest , mean = 0, sd = 1) + pnorm(-q.1_alpha2_Significance - statTest , mean = 0, sd = 1),2)
+    )
+  
+  powerSignificance_N$N = N
+  
+  powerSignificance_N_bind = powerSignificance_N %>%
+    select(Covariate, PSignificance, N)
+  
+  allSignificance_df = rbind(allSignificance_df, powerSignificance_N_bind)
+  
+  # Power Relevance test
+  PowerEquivalenceRatio_DF = list_CovariateForRatioToDftoPlot(powerEquivalenceRatio_Empirical(df_for_power_N, alphalevel.relev,  ratioInf, ratioSup, list_CovariateForRatio))
+  
+  PowerEquivalenceRatio_DF$N = N
+  
+  allEquivalence_df = rbind(allEquivalence_df, PowerEquivalenceRatio_DF)
+  
+}
+
+head(allSignificance_df)
+allSignificance_df$Covariate = factor(allSignificance_df$Covariate, levels = CovariateOrder)
+
+head(allEquivalence_df)
+
+allEquivalence_df = allEquivalence_df %>%
+  rowwise() %>%
+  mutate(Ratio = ifelse(!grepl(Names, Covariate, fixed=TRUE),
+                        paste0(Covariate, ", ", Names),
+                        Covariate) ) %>%
+  mutate(Ratio = factor(Ratio, levels = RatioOrder)) %>%
+  arrange(Ratio)
+
+
+# --------------------------------------
+# Power plots
+# --------------------------------------
+
+Covariate.colors = SteppedSequential5Steps[c(1, 21, 16, 11)]
+Ratio.colors = SteppedSequential5Steps[c(1, 5, 21, 25, 16, 11)]
+
+PowerSignif.plot = ggplot(allSignificance_df[allSignificance_df$N<100,],
+                          aes(x = N, y = PSignificance, color = Covariate)) +
+  geom_line() +
+  scale_color_manual(values = Covariate.colors) +
+  my_theme +
+  labs(x = "N", y = "P_{signif}")
+
+PowerRelev.plot = ggplot(allEquivalence_df, aes(x = N, y = PRelev, color = Ratio)) +
+  geom_line() +
+  scale_color_manual(values = Ratio.colors) +
+  my_theme +
+  labs(x = "N", y = "P_{relev}")
+
+
+
+#...Save Plots
+fig_file_name = "PowerSignificance"
+save_my_fig(PowerSignif.plot, fig_file_name, pfimResultGeneralPath)
+
+
+fig_file_name = "PowerRelevance"
+save_my_fig(PowerRelev.plot, fig_file_name, pfimResultGeneralPath)
+
+### End of L. FAYETTE PFIM 6.1 custom ###
 
 
 
@@ -199,9 +821,6 @@ my_theme <- theme_minimal(base_size = 16) +
     legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
     legend.text = element_text(size = 16, color = "black")      # Legend text size and color
   )
-
-
-
 
 
 
