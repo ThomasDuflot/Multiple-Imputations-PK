@@ -2461,7 +2461,7 @@ plot_WT <- plot_histogram_with_gaussian_and_density_fixed(long_df, "WT", "Weight
 plot_CrCl <- plot_histogram_with_gaussian_and_density_fixed(long_df, "CrCl", "Creatinine Clearance")
 
 
-png("WT_CrCl_Distribution.png", width = 16, height = 18, units = 'in', res = 900)
+png("WT_CrCl_Distribution.png", width = 16, height = 24, units = 'in', res = 900)
 ggarrange(plot_WT,plot_CrCl,nrow=2,common.legend=TRUE)
 dev.off()
 
@@ -2581,7 +2581,7 @@ AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = 
   geom_point(color = "black", position = position_jitterdodge(jitter.width = 0.1, dodge.width = 0.75), alpha = 1, size = 0.6, show.legend = FALSE) +  # Black points without legend
   facet_grid(ErrorType ~ Variable, scales = "free_y") +  # Facet by ErrorType in rows and Variable in columns
   labs(title = "Comparison of Absolute and Percentage Error for WT and CrCl by Percentage of Missing Data",
-       x = "Percentage of Missing Data",
+       x = "Missing Percentage",
        y = "Error Value",
        fill = "Imputation Method") +
   scale_color_jco() +  # Color scheme for lines
@@ -2610,7 +2610,7 @@ dev.off()
 # Assuming 'combined_data' already contains both PPI and UM variables
 
 combined_data <- combined_data %>%
-  rename(PPI = Concordance_PPI, UM = Concordance_UM)
+  rename(PPI = ConcordancePPI, UM = ConcordanceUM)
 
 # Count the number of TRUE/FALSE for PPI, grouped by Imputation_Method and Missing_Values
 concordance_summary_PPI <- combined_data %>%
