@@ -26,8 +26,163 @@ library(purrr)
 library(flextable)
 library(officer)
 library(colorBlindness)
+library(haven)
+library(copula)
 
 set.seed(123)
+url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BIOPRO.xpt"
+download.file(url, destfile = "DEMO_I.XPT", mode = "wb")
+# Read the .XPT file
+nhanes_data_BIO <- read_xpt("DEMO_I.XPT")
+# View first few rows
+head(nhanes_data_BIO)
+
+url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_DEMO.xpt"
+download.file(url, destfile = "DEMO_I.XPT", mode = "wb")
+# Read the .XPT file
+nhanes_data_DEM <- read_xpt("DEMO_I.XPT")
+# View first few rows
+head(nhanes_data_DEM)
+
+url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BMX.xpt"
+download.file(url, destfile = "DEMO_I.XPT", mode = "wb")
+# Read the .XPT file
+nhanes_data_EXAM <- read_xpt("DEMO_I.XPT")
+# View first few rows
+head(nhanes_data_EXAM)
+
+
+
+# List of data frames to merge
+dfs <- list(nhanes_data_BIO, nhanes_data_DEM, nhanes_data_EXAM)
+
+# Merge all data frames in the list by SEQN
+merged_data <- Reduce(function(x, y) merge(x, y, by = "SEQN", all.x = TRUE), dfs)
+
+# Compute eGFR using CKD-EPI with a race adjustment factor (1.159 for non-Hispanic Blacks)
+merged_data$eGFR_CKD_EPI <- with(merged_data, ifelse(RIAGENDR == 1,
+  ifelse(LBXSCR <= 0.9,
+         141 * (LBXSCR / 0.9)^(-0.411) * (0.993^RIDAGEYR) * ifelse(RIDRETH1 == 3, 1.159, 1),
+         141 * (LBXSCR / 0.9)^(-1.209) * (0.993^RIDAGEYR) * ifelse(RIDRETH1 == 3, 1.159, 1)
+  ),
+  ifelse(LBXSCR <= 0.7,
+         144 * (LBXSCR / 0.7)^(-0.329) * (0.993^RIDAGEYR) * ifelse(RIDRETH1 == 3, 1.159, 1),
+         144 * (LBXSCR / 0.7)^(-1.209) * (0.993^RIDAGEYR) * ifelse(RIDRETH1 == 3, 1.159, 1)
+  )
+))
+
+# Compute Body Surface Area (BSA) using the DuBois formula
+merged_data$BSA <- with(merged_data, 0.007184 * BMXWT^0.425 * BMXHT^0.725)
+
+# Adjust the CKD-EPI eGFR to obtain the absolute value (in mL/min)
+merged_data$eGFR_abs <- with(merged_data, eGFR_CKD_EPI * (BSA / 1.73))
+
+
+# Filter the merged dataset:
+final_df <- merged_data %>%
+  # Keep only participants aged 18 or older
+  filter(RIDAGEYR >= 18) %>%
+  # Remove rows with missing values in any of the selected variables:
+  filter(!is.na(RIDAGEYR),
+         !is.na(BMXHT),
+         !is.na(BMXWT),
+         !is.na(LBDSALSI),
+         !is.na(eGFR_abs)) %>%
+  # Select only the desired columns:
+  select(RIDAGEYR, BMXHT, LBDSALSI, eGFR_abs, BMXWT) %>%
+  # Rename the columns as requested:
+  rename(Age = RIDAGEYR,
+         Height = BMXHT,
+         Alb = LBDSALSI,
+         CrCl = eGFR_abs,
+         WT = BMXWT)
+
+# Check the first few rows of the new dataframe
+head(final_df)
+
+
+
+library(copula)
+library(dplyr)
+
+# Assuming final_df has been created with the variables: Age, Height, Alb, CrCl, and Weight
+head(final_df)
+
+# Step 1. Create a data matrix and convert to pseudo-observations
+data_mat <- as.matrix(final_df[, c("Age", "Height", "Alb", "CrCl", "WT")])
+u_data <- pobs(data_mat)
+
+# Step 2. Fit a normal copula to the pseudo-observations
+# Define a normal copula with an unstructured correlation matrix
+norm_cop <- normalCopula(dim = 5, dispstr = "un")
+fit_norm <- fitCopula(norm_cop, u_data, method = "mpl")
+summary(fit_norm)
+
+# Step 3. Simulate 100 new pseudo-observations from the fitted copula
+simulated_u <- rCopula(100, fit_norm@copula)
+
+# Step 4. Transform the pseudo-observations back to the original scale using empirical quantile functions
+# (Note: You can also use parametric quantiles if you have a good distributional fit)
+simulated_Age    <- sapply(simulated_u[, 1], function(u) quantile(final_df$Age, u, type = 8))
+simulated_Height <- sapply(simulated_u[, 2], function(u) quantile(final_df$Height, u, type = 8))
+simulated_Alb    <- sapply(simulated_u[, 3], function(u) quantile(final_df$Alb, u, type = 8))
+simulated_CrCl   <- sapply(simulated_u[, 4], function(u) quantile(final_df$CrCl, u, type = 8))
+simulated_WT <- sapply(simulated_u[, 5], function(u) quantile(final_df$WT, u, type = 8))
+
+# Create a new dataframe with the simulated observations
+simulated_df <- data.frame(
+  Age    = simulated_Age,
+  Height = simulated_Height,
+  Alb    = simulated_Alb,
+  CrCl   = simulated_CrCl,
+  WT = simulated_WT
+)
+
+# Check the simulated data
+head(simulated_df)
+
+library(ggplot2)
+
+# Assume your original dataset is named data_subset and contains variables: WT, CrCl, ALB, and Height
+# Assume your simulated dataset is named virtual_patients with the same variable names
+
+# Label the datasets
+real_data <- data_subset
+real_data$Type <- "Real"
+
+virtual_patients$Type <- "Simulated"
+
+# Combine the datasets
+combined_data <- rbind(real_data, virtual_patients)
+
+# Plot Weight distribution
+ggplot(combined_data, aes(x = WT, fill = Type)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Weight Distribution (WT)")
+
+# Plot Creatinine Clearance distribution
+ggplot(combined_data, aes(x = CrCl, fill = Type)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Creatinine Clearance (CrCl)")
+
+# Plot Albumin distribution
+ggplot(combined_data, aes(x = ALB, fill = Type)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Albumin (ALB)")
+
+# Plot Height distribution
+ggplot(combined_data, aes(x = Height, fill = Type)) +
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Height Distribution")
+
+
+
+
+
 # Define the means and standard deviations for each parameter
 Height <- 170  # cm
 Height_sd <- 10
