@@ -28,6 +28,7 @@ library(officer)
 library(colorBlindness)
 library(haven)
 library(copula)
+library(fitdistrplus)
 
 set.seed(123)
 url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BIOPRO.xpt"
@@ -100,141 +101,133 @@ final_df <- merged_data %>%
 # Check the first few rows of the new dataframe
 head(final_df)
 
+var_order <- c("Age", "Height", "Alb", "CrCl", "WT")
 
+fit_multiple_dists <- function(x, dist_vec) {
+  fits <- list()
+  for(d in dist_vec) {
+    res <- tryCatch({
+      fitdist(x, d)
+    }, error = function(e) NULL) # Handle errors gracefully
+    fits[[d]] <- res
+  }
+  return(fits)
+}
 
-library(copula)
-library(dplyr)
+best_fits <- list()
 
-# Assuming final_df has been created with the variables: Age, Height, Alb, CrCl, and Weight
-head(final_df)
+# Define candidate distributions for each variable
+dist_choices <- list(
+  Age    = NULL,                # Empirical
+  WT     = c("lnorm", "norm", "gamma"),
+  CrCl   = c("lnorm", "norm", "gamma"),
+  Alb    = c("lnorm", "norm", "gamma"),
+  Height = c("lnorm", "norm", "gamma")
+)
 
-# Step 1. Create a data matrix and convert to pseudo-observations
-data_mat <- as.matrix(final_df[, c("Age", "Height", "Alb", "CrCl", "WT")])
+for (var in var_order) {
+  cat("\n===== Variable:", var, "=====\n")
+  
+  x <- final_df[[var]]
+
+  if (is.null(dist_choices[[var]])) {
+    cat("Using empirical approach for", var, "\n")
+    best_fits[[var]] <- NULL  # Store as NULL for later handling
+  } else {
+    candidate_fits <- fit_multiple_dists(x, dist_choices[[var]])
+    
+    best_aic  <- Inf
+    best_dist <- NULL
+    
+    for (d in names(candidate_fits)) {
+      fit_obj <- candidate_fits[[d]]
+      if (!is.null(fit_obj)) {
+        cat("  Distribution:", d, "| AIC:", round(fit_obj$aic, 2), "| BIC:", round(fit_obj$bic, 2), "\n")
+        if (fit_obj$aic < best_aic) {
+          best_aic  <- fit_obj$aic
+          best_dist <- fit_obj
+        }
+      }
+    }
+    
+    best_fits[[var]] <- best_dist
+    if (!is.null(best_dist)) {
+      cat("  --> Best fit for", var, "is", best_dist$distname, "with AIC =", round(best_dist$aic, 2), "\n")
+    }
+  }
+}
+
+data_mat <- as.matrix(final_df[, var_order])
 u_data <- pobs(data_mat)
 
-# Step 2. Fit a normal copula to the pseudo-observations
-# Define a normal copula with an unstructured correlation matrix
-norm_cop <- normalCopula(dim = 5, dispstr = "un")
+norm_cop <- normalCopula(dim = length(var_order), dispstr = "un")
 fit_norm <- fitCopula(norm_cop, u_data, method = "mpl")
 summary(fit_norm)
 
-# Step 3. Simulate 100 new pseudo-observations from the fitted copula
-simulated_u <- rCopula(100, fit_norm@copula)
 
-# Step 4. Transform the pseudo-observations back to the original scale using empirical quantile functions
-# (Note: You can also use parametric quantiles if you have a good distributional fit)
-simulated_Age    <- sapply(simulated_u[, 1], function(u) quantile(final_df$Age, u, type = 8))
-simulated_Height <- sapply(simulated_u[, 2], function(u) quantile(final_df$Height, u, type = 8))
-simulated_Alb    <- sapply(simulated_u[, 3], function(u) quantile(final_df$Alb, u, type = 8))
-simulated_CrCl   <- sapply(simulated_u[, 4], function(u) quantile(final_df$CrCl, u, type = 8))
-simulated_WT <- sapply(simulated_u[, 5], function(u) quantile(final_df$WT, u, type = 8))
+n_sim <- 100
+sim_u <- rCopula(n_sim, fit_norm@copula)
 
-# Create a new dataframe with the simulated observations
-simulated_df <- data.frame(
-  Age    = simulated_Age,
-  Height = simulated_Height,
-  Alb    = simulated_Alb,
-  CrCl   = simulated_CrCl,
-  WT = simulated_WT
-)
+simulate_from_fit <- function(u, dist_fit, var_name) {
+  if (is.null(dist_fit)) {
+    return(quantile(final_df[[var_name]], u, type = 8)) # Empirical for Age
+  }
+  
+  dist_name <- dist_fit$distname
+  est <- dist_fit$estimate
+  
+  if (dist_name == "norm") {
+    return(qnorm(u, mean = est["mean"], sd = est["sd"]))
+    
+  } else if (dist_name == "lnorm") {
+    return(qlnorm(u, meanlog = est["meanlog"], sdlog = est["sdlog"]))
+    
+  } else if (dist_name == "gamma") {
+    return(qgamma(u, shape = est["shape"], rate = est["rate"]))
+    
+  } else {
+    stop(paste("Distribution", dist_name, "not handled"))
+  }
+}
 
-# Check the simulated data
+simulated_list <- list()
+
+for (i in seq_along(var_order)) {
+  var_name <- var_order[i]
+  u_col    <- sim_u[, i]
+  dist_fit <- best_fits[[var_name]]
+  
+  sim_values <- simulate_from_fit(u_col, dist_fit, var_name)
+  simulated_list[[var_name]] <- sim_values
+}
+
+simulated_df <- as.data.frame(simulated_list)
 head(simulated_df)
 
-library(ggplot2)
 
-# Assume your original dataset is named data_subset and contains variables: WT, CrCl, ALB, and Height
-# Assume your simulated dataset is named virtual_patients with the same variable names
+real_data <- final_df[var_order] %>%
+  mutate(Type = "Real")
 
-# Label the datasets
-real_data <- data_subset
-real_data$Type <- "Real"
+sim_data <- simulated_df %>%
+  mutate(Type = "Simulated")
 
-virtual_patients$Type <- "Simulated"
+combined_data <- bind_rows(real_data, sim_data)
 
-# Combine the datasets
-combined_data <- rbind(real_data, virtual_patients)
+plot_var <- function(var) {
+  ggplot(combined_data, aes_string(x = var, fill = "Type")) +
+    geom_density(alpha = 0.5) +
+    theme_minimal() +
+    ggtitle(paste("Distribution of", var, "Real vs Simulated"))
+}
 
-# Plot Weight distribution
-ggplot(combined_data, aes(x = WT, fill = Type)) +
-  geom_density(alpha = 0.5) +
-  theme_minimal() +
-  ggtitle("Weight Distribution (WT)")
-
-# Plot Creatinine Clearance distribution
-ggplot(combined_data, aes(x = CrCl, fill = Type)) +
-  geom_density(alpha = 0.5) +
-  theme_minimal() +
-  ggtitle("Creatinine Clearance (CrCl)")
-
-# Plot Albumin distribution
-ggplot(combined_data, aes(x = ALB, fill = Type)) +
-  geom_density(alpha = 0.5) +
-  theme_minimal() +
-  ggtitle("Albumin (ALB)")
-
-# Plot Height distribution
-ggplot(combined_data, aes(x = Height, fill = Type)) +
-  geom_density(alpha = 0.5) +
-  theme_minimal() +
-  ggtitle("Height Distribution")
+# Plot for each variable
+plot_var("Age")
+plot_var("WT")
+plot_var("CrCl")
+plot_var("Alb")
+plot_var("Height")
 
 
-
-
-
-# Define the means and standard deviations for each parameter
-Height <- 170  # cm
-Height_sd <- 10
-
-WT <- 70  # kg
-WT_sd <- 15
-
-Alb <- 42  # g/L
-Alb_sd <- 4
-
-CrCl <- 90  # mL/min/1.73m2
-CrCl_sd <- 15
-
-Age <- 50  # years
-Age_sd <- 15
-
-# Correlation matrix between parameters
-# Adding Age with hypothetical correlations to Weight, Albumin, and Renal Function
-cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
-                       0.7, 1, 0, 0, 0.3,   # WT
-                       0, 0, 1, 0.5, -0.2,  # Alb
-                       0, 0, 0.5, 1, -0.4,  # CrCl
-                       0.2, 0.3, -0.2, -0.4, 1), # Age
-                     nrow=5, byrow=TRUE)
-
-# Parameter means in the same order as the correlation matrix
-means <- c(Height, WT, Alb, CrCl, Age)
-
-# Standard deviations of the parameters
-sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
-
-# Calculate the covariance matrix from the correlation matrix and standard deviations
-cov_matrix <- cor_matrix * (sds %*% t(sds))
-
-# Generate 100 patients with correlated distributions
-set.seed(123)  # For reproducibility
-sim_data <- mvrnorm(n = 100, mu = means, Sigma = cov_matrix)
-
-# Convert to a dataframe and rename columns
-sim_data <- as.data.frame(sim_data)
-colnames(sim_data) <- c("Height", "WT", "Alb", "CrCl", "Age")
-
-# Display a preview of the simulated data
-head(sim_data)
-
-# Add binary variables for PPI and UM
-sim_data$PPI <- rbinom(n = 100, size = 1, prob = 0.5)
-sim_data$UM <- rbinom(n = 100, size = 1, prob = 0.5)
-sim_data$ID <- 1:100
-
-# Optional: Check correlations in the simulated data
-cor(sim_data)
 
 
 
