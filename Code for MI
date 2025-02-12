@@ -29,6 +29,10 @@ library(colorBlindness)
 library(haven)
 library(copula)
 library(fitdistrplus)
+library(corrplot)
+library(ggcorrplot)
+
+
 
 set.seed(123)
 url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BIOPRO.xpt"
@@ -220,13 +224,68 @@ plot_var <- function(var) {
     ggtitle(paste("Distribution of", var, "Real vs Simulated"))
 }
 
-# Plot for each variable
-plot_var("Age")
-plot_var("WT")
-plot_var("CrCl")
-plot_var("Alb")
-plot_var("Height")
+plot_var <- function(var) {
+  ggplot(combined_data, aes_string(x = var, fill = "Type")) +
+    geom_density(alpha = 0.5) +
+    my_theme +
+    ggtitle(paste("Distribution of", var, "Real vs Simulated"))
+}
 
+# Generate plots
+plot_age    <- plot_var("Age")
+plot_wt     <- plot_var("WT")
+plot_crcl   <- plot_var("CrCl")
+plot_alb    <- plot_var("Alb")
+plot_height <- plot_var("Height")
+
+# Compute correlation matrices for real and simulated data
+cor_matrix_real <- cor(real_data[, var_order], use = "pairwise.complete.obs")
+cor_matrix_sim  <- cor(simulated_df[, var_order], use = "pairwise.complete.obs")
+
+# Correlation plot for real data
+cor_plot_real <- ggcorrplot(cor_matrix_real, 
+                            type = "lower", lab = TRUE, 
+                            hc.order = FALSE, # Ensure order is fixed
+                            lab_size = 3, 
+                            colors = c("blue", "white", "red")) + 
+  ggtitle("Correlation Matrix: Real Data") +
+  theme_bw(base_size = 11)
+
+# Correlation plot for simulated data
+cor_plot_sim <- ggcorrplot(cor_matrix_sim, 
+                           type = "lower", lab = TRUE, 
+                           hc.order = FALSE, # Ensure order is fixed
+                           lab_size = 3, 
+                           colors = c("blue", "white", "red")) + 
+  ggtitle("Correlation Matrix: Simulated Data") +
+  theme_bw(base_size = 11)
+
+# Create an empty plot using gridExtra
+empty_plot <- grid.rect(gp = gpar(col = "white"))
+
+
+combined_plot <- ggarrange(
+  plot_age, plot_wt, 
+  plot_crcl, plot_alb, 
+  plot_height, empty_plot,cor_plot_real, cor_plot_sim,
+  nrow = 4, ncol = 2,
+  common.legend = TRUE, legend = "right"
+)
+
+
+png("NHANES_Copula.png", width = 18, height = 12, units = "in", res = 900) 
+print(combined_plot)  # Ensure the plot is printed inside png()
+dev.off()
+
+
+sim_data<-simulated_df
+# Add binary variables for PPI and UM
+sim_data$PPI <- rbinom(n = 100, size = 1, prob = 0.3)
+sim_data$UM <- rbinom(n = 100, size = 1, prob = 0.5)
+sim_data$ID <- 1:100
+
+# Optional: Check correlations in the simulated data
+cor(sim_data)
 
 
 
@@ -240,9 +299,9 @@ modelEquations = list(
 
 # model parameters
 modelParameters = list(
-  ModelParameter( name = "V",    distribution = LogNormal( mu = 10, omega = sqrt(0.09)) ),
-  ModelParameter( name = "Cl",   distribution = LogNormal( mu = 1, omega = sqrt(0.09 )) ),
-  ModelParameter( name = "ka",   distribution = LogNormal( mu = 1, omega = sqrt(0.09)) ))
+  ModelParameter( name = "V",    distribution = LogNormal( mu = 10, omega = 0.30) ),
+  ModelParameter( name = "Cl",   distribution = LogNormal( mu = 1, omega = 0.15) ),
+  ModelParameter( name = "ka",   distribution = LogNormal( mu = 1, omega = 0.5) ))
 
 
 # error Model
@@ -329,16 +388,15 @@ optimizationPopFIM = run( optimizationPopFIM )
 
 # plots
 plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL"))
-outputPath = "D:/MOBILITE/1er papier - Simulation Covariables/"
-outputFile = "EvaluationPopFIM.html"
-outputFile = "Optimization_PopFIM_100Sub_5Samp.html"
+outputPath = "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1"
+outputFile = "OptimizationPopFIMR1.html"
 Report( optimizationPopFIM, outputPath, outputFile, plotOptions )
 
 
-
+setwd("C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1")
 ### Part from L. FAYETTE (IAME) ###
 rootDir = getwd()
-currentFolder = file.path(rootDir, "Propre_pour_git")
+currentFolder = file.path(rootDir)
 
 
 # Create folder for PFIM results
@@ -441,7 +499,7 @@ mu_V = 10
 mu_ka = 1
 
 WT_VC = 1 # Weight on Vc ()
-CrCl_CL = -0.8 # Creatinine Clearance on CL
+CrCl_CL = 0.8 # Creatinine Clearance on CL
 PPI_KA = log(0.5) # Effect of Proton Pump Inhibitor on KA
 UM_CL = log(2) # Effect of UM on CL
 
@@ -460,6 +518,7 @@ modelParameters = list(
                   distribution = Normal( mu = PPI_KA , omega = 0 ), fixedOmega = TRUE, covariateEffect = TRUE )
   
 )
+
 
 # --------------------------------------
 # model covariate relationship
@@ -488,7 +547,7 @@ administrationRespPK = Administration( outcome = "RespPK",
 
 ## sampling times
 samplingTimesRespPK = SamplingTimes( outcome = "RespPK",
-                                     samplings = c(0.25, 0.5, 4, 36, 40)) #  c( 0, 2, 12, 24, 40 ) )
+                                     samplings =  	c(0.25, 0.5, 4, 28, 32))
 
 ## arms
 arm1 = Arm( name = "BrasTest",
@@ -502,55 +561,46 @@ arm1 = Arm( name = "BrasTest",
 # Covariates
 # --------------------------------------
 
-# WT : 70 : Weight (kg)
-# CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
-# PPI : 0 : PPI intake or not
-# UM : 0 : Ultrarapid metabolizer
 
-mean_CLCR = 90
-mean_WT = 70
+mean_CLCR = mean(sim_data$CrCl)
+mean_WT = mean(sim_data$WT)
 
-sd_CLCR = 15
-sd_WT = 15
+sd_CLCR = sd(sim_data$CrCl)
+sd_WT = sd(sim_data$WT)
 
 
-PPI.P0 = 0.5 # Proportion of PPI=0
-PPI.P1 = 1 - PPI.P0 # Proportion of PPI=1
+PPI.P1 = mean(sim_data$PPI) # Proportion of PPI=1
+PPI.P0 = 1 - PPI.P1 # Proportion of PPI=0
 
-UM.P0 = 0.5 # Proportion of UM=0
-UM.P1 = 1 - UM.P0 # Proportion of UM=1
+UM.P1 = mean(sim_data$UM) # Proportion of UM=1
+UM.P0 = 1 - UM.P1 # Proportion of UM=0
 
 
 # Définir les moyennes et écarts-types pour chaque paramètre
-Height <- 170  # cm
-Height_sd <- 10
+Height <- mean(sim_data$Height)  # cm
+Height_sd <- sd(sim_data$Height)
 
-WT <- 70  # kg
-WT_sd <- 15
+WT <- mean(sim_data$WT)  # kg
+WT_sd <- sd(sim_data$WT)
 
-Alb <- 42  # g/L
-Alb_sd <- 4
+Alb <- mean(sim_data$Alb)  # g/L
+Alb_sd <- sd(sim_data$Alb)
 
-CrCl <- 90  # mL/min/1.73m2
-CrCl_sd <- 15
+CLCR <- mean(sim_data$CrCl)  # mL/min/1.73m2
+CLCR_sd <- sd(sim_data$CrCl)
 
-Age <- 50  # ans
-Age_sd <- 15
+Age <- mean(sim_data$Age)  #years
+Age_sd <- sd(sim_data$Age)
 
 # Matrice de corrélation entre les paramètres
 # Ajout de l'Age avec des corrélations hypothétiques avec Poids, Albumine et Fonction rénale
-cor_matrix <- matrix(c(1, 0.7, 0, 0, 0.2,   # Height
-                       0.7, 1, 0, 0, 0.3,   # WT
-                       0, 0, 1, 0.5, -0.2,  # ALB
-                       0, 0, 0.5, 1, -0.4,  # CrCl
-                       0.2, 0.3, -0.2, -0.4, 1), # Age
-                     nrow=5, byrow=TRUE)
+cor_matrix <- cor(sim_data[1:5])
 
 # Moyennes des paramètres dans le même ordre que la matrice de corrélation
-moyennes <- c(Height, WT, Alb, CrCl, Age)
+moyennes <- c(Age, Height, Alb, CLCR, WT)
 
 # Écarts-types des paramètres
-sds <- c(Height_sd, WT_sd, Alb_sd, CrCl_sd, Age_sd)
+sds <- c(Age_sd, Height_sd, Alb_sd, CLCR_sd, WT_sd)
 
 # Calcul de la matrice de covariance à partir de la matrice de corrélation et des écarts-types
 cov_matrix <- cor_matrix * (sds %*% t(sds))
@@ -558,16 +608,16 @@ cov_matrix <- cor_matrix * (sds %*% t(sds))
 # Générer MC=1000 patients avec les distributions corrélées
 set.seed(123)  # Pour la reproductibilité
 MC = 1000
-sim_data <- mvrnorm(n = MC, mu = moyennes, Sigma = cov_matrix)
+sim_data_cov <- mvrnorm(n = MC, mu = moyennes, Sigma = cov_matrix)
 
-sim_data.df = data.frame(sim_data)
-colnames(sim_data.df) = c("Height", "WT", "Alb", "CLCR", "Age")
+sim_data.df = data.frame(sim_data_cov)
+colnames(sim_data.df) = c("Age", "Height", "Alb", "CLCR","WT")
 head(sim_data.df)
 
 PFIM_covariates.df = sim_data.df %>%
   dplyr::select(WT, CLCR) %>%
   mutate(WT = log(WT/mean_WT),
-         CLCR = log(CLCR/90))
+         CLCR = log(CLCR/mean_CLCR))
 
 PFIM_covariates.df$PPI = rbinom(MC, size = 1, prob = PPI.P1)
 PFIM_covariates.df$UM = rbinom(MC, size = 1, prob = UM.P1)
@@ -660,146 +710,6 @@ save(evaluation.Data, file = saveEvaluationFIMpath)
 # --------------------------------------
 # Results
 # --------------------------------------
-
-resPFIM_Ninit = tableRes(evaluation.Data, LaTex = TRUE)
-
-PredSE = resPFIM_Ninit 
-
-savetitle = "PredSE"
-write_tab_latex(PredSE, savetitle, pfimResultGeneralPath)
-
-################################################################################
-#--- Important constants
-
-alphalevel.signif = 0.05
-alphalevel.relev = 0.1
-
-ratioSup = 1.25
-ratioInf = 0.80
-
-desiredPowerSignif = 0.8
-desiredPowerRelev = 0.8
-
-# --------------------------------------
-# Power computation
-# --------------------------------------
-
-powerSignif = powerSignificance(evaluation.Data, alphalevel.signif)
-powerSignif.df = data.frame(Parameter = names(powerSignif),
-                            PowerSignif = as.numeric(powerSignif))
-
-save(powerSignif.df, file = file.path(pfimResultGeneralPath, paste0("powerSignif.df", ".RData")))
-
-powerSignif.df_Latex = powerSignif.df %>%
-  rowwise() %>%
-  mutate(Parameter = gsub("beta, ", "\\beta_{", names_to_latex(Parameter), fixed=TRUE)) %>%
-  rename("P_{Signif}" = PowerSignif)
-
-savetitle = "PowerSignificance"
-write_tab_latex(powerSignif.df_Latex, savetitle, pfimResultGeneralPath)
-
-
-CI_ratio_Latex = list_ciRatioToDftoPlot(ciRatio(evaluation.Data, alphalevel.relev,  list_CovariateForRatio), LaTex = T)
-savetitle = "CIratios"
-write_tab_latex(CI_ratio_Latex, savetitle, pfimResultGeneralPath)
-
-
-powerRelevance = powerRelevanceRatio(evaluation.Data, alphalevel.relev, ratioInf, ratioSup, list_CovariateForRatio )
-powerRelevance.df = list_CovariateForRatioToDftoPlot(powerRelevance)
-
-save(powerRelevance.df, file = file.path(pfimResultGeneralPath, paste0("powerSignif", ".RData")))
-
-
-powerRelevance.df_Latex = list_CovariateForRatioToDftoPlot(powerRelevance, LaTex = TRUE) %>%
-  rowwise() %>%
-  mutate(Ratio = ifelse(!grepl(Names, Covariate, fixed=TRUE),
-                        paste0(Covariate, ", (", Names, ")"),
-                        Covariate) ) %>%
-  mutate(PRelev = round(PRelev, 2)) %>%
-  arrange(Ratio) %>%
-  select(Ratio, PRelev) %>%
-  rename("P_{relev}" = PRelev)
-
-savetitle = "PowerRelevance"
-write_tab_latex(powerRelevance.df_Latex, savetitle, pfimResultGeneralPath)
-
-
-
-# --------------------------------------
-# Number of subjects needed
-# --------------------------------------
-sujSgnif = subjectsPowerSignificance(evaluation.Data, alphalevel.signif, desiredPowerSignif)
-
-sujSgnif.df = data.frame(Parameter = names(sujSgnif),
-                         N = as.vector(sujSgnif))
-save(sujSgnif.df, file = file.path(pfimResultGeneralPath, paste0("NneededSignificance", ".RData")))
-
-sujSgnif.df_Latex = sujSgnif.df %>%
-  rowwise() %>%
-  mutate(
-    Parameter = names_to_latex(Parameter),
-    N = ceiling(N)
-  )
-
-savetitle = "NneededSignificance"
-write_tab_latex(sujSgnif.df_Latex, savetitle, pfimResultGeneralPath)
-
-
-sujRelev = subjectsPowerRelevance(evaluation.Data, alphalevel.relev,
-                                  desiredPowerRelev,
-                                  ratioInf, ratioSup,
-                                  list_CovariateForRatio)
-
-sujRelev.df = data.frame(Ratio = names(sujRelev),
-                         N = as.vector(unlist(sujRelev)))
-save(sujRelev.df, file = file.path(pfimResultGeneralPath, paste0("NneededRelevance", ".RData")))
-
-sujRelev.df_Latex = sujRelev.df %>%
-  rowwise() %>%
-  mutate(
-    Ratio = paste0("", gsub(", ", ", ", Ratio, fixed=TRUE), ""),
-    Ratio = gsub("P10", "(P10)", Ratio, fixed=TRUE),
-    Ratio = gsub("P90", "(P90)", Ratio, fixed=TRUE),
-    N = ceiling(N)
-  )  %>%
-  arrange(Ratio)
-
-savetitle = "NneededRelevance"
-write_tab_latex(sujRelev.df_Latex, savetitle, pfimResultGeneralPath)
-
-CI_andPower_andN = left_join(left_join(CI_ratio_Latex, powerRelevance.df_Latex),
-                             sujRelev.df_Latex)
-savetitle = "Relevance_CI_Power_N"
-write_tab_latex(CI_andPower_andN, savetitle, pfimResultGeneralPath)
-
-################################################################################
-# --- Plot Power as a function of N
-
-N_list = seq(1, 200, 1) # N to test
-N_init = 100 # N used in evaluation
-
-q.1_alpha2_Significance = qnorm(p= 1-alphalevel.signif/2, 0, 1)
-q.1_alpha2_CIratio = qnorm(p= 1-alphalevel.relev/2, 0, 1)
-
-nCov = 4
-df_for_power_Ninit =  tableRes(evaluation.Data)[1:nCov, ] %>%
-  mutate(Name = gsub("\u03bc_", "", Parameter)) %>%
-  rename(
-    Values = Value
-  ) %>%
-  select(-Parameter, -RSE)
-
-df_for_power_Ninit$Covariate = c("CLCR", "UM", "PPI", "WT")
-df_for_power_Ninit$Parameter = c("Cl", "Cl", "ka", "V")
-
-#---Significance
-powerSignificance_Ninit = df_for_power_Ninit %>%
-  rowwise() %>%
-  mutate(statTest = Values/SE,
-         PSignificance = round(1 - pnorm(q.1_alpha2_Significance - statTest , mean = 0, sd = 1) + pnorm(-q.1_alpha2_Significance - statTest , mean = 0, sd = 1),2)
-  )
-
-
 powerEquivalenceRatio_Empirical <- function(df, alphalevel, ratioInf, ratioSup, list_CovariateForRatio) {
   
   list_PRelev = list()
@@ -961,154 +871,8 @@ save_my_fig(PowerRelev.plot, fig_file_name, pfimResultGeneralPath)
 
 
 
-my_theme <- theme_minimal(base_size = 16) +
-  theme(
-    axis.title = element_text(size = 18, color = "black"),      # Axis labels size and color
-    axis.text = element_text(size = 16, color = "black"),       # Axis ticks size and color
-    axis.line = element_line(linewidth = 1.5),                  # Axis lines size
-    legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
-    legend.text = element_text(size = 16, color = "black")      # Legend text size and color
-  )
-
-
-
 # Define the PK model
 code <- '
-$PROB
-$PARAM @annotated
-TVCL : 1  : 1  Clearance (L.h-1)
-TVVC : 10  : 2  Central volume (L)
-TVKA : 1  : 3  Absorption constant (L)
-
-
-$PARAM @annotated @covariates
-
-WT : 70 : Weight (kg)
-CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
-WT_VC : 1 : Weight on Vc ()
-CrCl_CL : -0.8 : Creatinine Clearance on CL
-PPI : 0 : PPI intake or not
-PPI_KA : 0.5 : Effect of Proton Pump Inhibitor on KA
-UM : 0 : Ultrarapid metabolizer
-UM_CL : 2 : Effect of UM on CL
-
-$CMT @annotated
-GUT : Depot compartment [ADM]
-CENTRAL : Central compartment (mg/L) [OBS]
-
-
-
-$TABLE
-double DV  = (CENTRAL / VC);
-
-
-$MAIN
-double CL = TVCL * pow((CrCl/90),CrCl_CL) * pow((UM_CL),UM)    ;
-double VC = TVVC * pow((WT/70),WT_VC)  ;
-double KA = TVKA * pow((PPI_KA),PPI)   ;
-double K10 = CL/VC ;
-
-
-
-$ODE
-
-dxdt_GUT        = -KA*GUT ;
-dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
-
-$CAPTURE DV CL VC KA'
-
-mod <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
-
-
-
-
-
-
-
-
-ff <- function(model_switch, xt, p, poped.db){
-  times_xt <- drop(xt)  
-  dose_times <- seq(from=0,to=max(times_xt),by=p[["TAU"]])
-  time <- sort(unique(c(times_xt,dose_times)))
-  is.dose <- time %in% dose_times
-  
-  data <- data.frame(
-    ID = 1,
-    time = time,
-    amt = ifelse(is.dose,p[["DOSE"]], 0), 
-    cmt = ifelse(is.dose, 1, 0)
-  )
-  
-  data[["evid"]] <- data[["cmt"]]
-  
-  mod <- param(mod, as.list(p))
-  
-  out <- mrgsim_q(mod,data)
-  
-  y <- out$DV[match(times_xt,out$time)]
-  
-  return(list(y=matrix(y,ncol=1),poped.db=poped.db))
-}
-  
-
-
-sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
-  parameters=c(TVCL=bpop[1]*exp(b[1]),
-               TVVC=bpop[2]*exp(b[2]),
-               TVKA=bpop[3]*exp(b[3]),
-               WT_VC=bpop[4],
-               CrCl_CL=bpop[5],
-               PPI_KA=bpop[6],
-               UM_CL=bpop[7],
-               DOSE=a[1],
-               TAU =a[2],
-               WT  =a[3],
-               CrCl =a[4],
-               PPI  =a[5],
-               UM = a[6])
-  return(parameters) 
-}
-
-
-feps <- function(model_switch,xt,parameters,epsi,poped.db){
-  returnArgs <- do.call(poped.db$model$ff_pointer,list(model_switch,xt,parameters,poped.db)) 
-  y <- returnArgs[[1]]
-  poped.db <- returnArgs[[2]]
-  
-  y = y*(1+epsi[,1])+epsi[,2]
-  
-  return(list( y= y,poped.db =poped.db )) 
-}
-
-
-poped.cov_mrg_poped <- create.poped.database(
-  ff_fun=ff,
-  fg_fun=sfg.mrgsolve.cov,
-  fError_fun=feps,
-  bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=-0.8, PPI_KA=0.5, UM_CL=2), 
-  d=c(TVCL=0.09,TVVC=0.09,TVKA=0.09), 
-  notfixed_bpop=c(1,1,1,1,1,1,1),
-  sigma=c(prop=0.15^2,add=0.1^2),
-  notfixed_sigma=c(1,1),
-  m=100,
-  groupsize=1,
-  xt=c(0.25,0.5,4,36,40),
-  discrete_xt=c(0.25,0.5,4,36,40),
-  minxt=c(0),
-  maxxt=c(40),
-  a = cbind(DOSE=rep(100,100), TAU=rep(8,100), WT=sim_data$WT, CrCl=sim_data$CrCl,PPI=sim_data$PPI,UM=sim_data$UM)
-)
-
-plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
-ev<-evaluate_design(fim.calc.type=4,poped.cov_mrg_poped)
-ev
-shrinkage(poped.cov_mrg_poped)
-
-
-
-
-# Define the PK model
-codeb <- '
 
 $PROB
 
@@ -1125,14 +889,14 @@ CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
 PPI : 0 : PPI intake or not
 UM : 0 : Ultrarapid metabolizer
 WT_VC : 1 : Weight on Vc ()
-CrCl_CL : -0.8 : Creatinine Clearance on CL
+CrCl_CL : 0.8 : Creatinine Clearance on CL
 PPI_KA : 0.5 : Effect of Proton Pump Inhibitor on KA
 UM_CL : 2 : Effect of UM on CL
 
 $OMEGA @block
-0.09 // CL
+0.0225// CL
 0 0.09 // VC
-0 0 0.09 // KA
+0 0 0.25 // KA
 
 
 $SIGMA 
@@ -1164,7 +928,7 @@ dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
 
 $CAPTURE DV CL VC KA'
 
-modbsv <- mrgsolve::mcode("optim", codeb, atol=1e-8, rtol=1e-8,maxsteps=5000)
+modbsv <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
 
 
 
@@ -1177,7 +941,7 @@ out <-
 
 out
 
-png("mrgsolve output.png", width = 24, height = 9, units = 'in', res = 900)
+png("mrgsolve output R1.png", width = 24, height = 9, units = 'in', res = 900)
 
 plot(out)
 
