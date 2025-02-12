@@ -1036,29 +1036,47 @@ final_data_mice$UM<-as.factor(as.character(final_data_mice$UM))
 
 
 
+
+
+
+
 # Define the columns you want to use for imputation
 selected_columns <- c(1:9, 15)  # Columns: ID, time, 3:9, and DV (column 14)
 
 
-# Define the percentages of missing data to generate
-percentages <- c(5, 20, 50, 75)
+
 
 # Create a list to store dataframes with different percentages of missing data
 missing_data_list <- list()
 
+# Define the percentages of missing data to generate (5%, 20%, 50% and 75%)
+percentages <- c(5, 20, 50,75)
+
+# Get the unique IDs and the number of individuals
+unique_ids <- unique(final_data$ID)
+n_individuals <- length(unique_ids)
+
+# Step 1: Create missing data for WT, CrCl, and PPI
+introduce_missing_data <- function(df, variable, percentage) {
+  n_missing <- round(n_individuals * percentage / 100)
+  individuals_to_missing <- sample(unique_ids, n_missing, replace = FALSE)
+  df[df$ID %in% individuals_to_missing, variable] <- NA
+  return(df)
+}
+
 # Loop over each percentage and generate the corresponding dataframe with missing data
 for (perc in percentages) {
   data_with_missing <- final_data_mice
-  for (var in c("CrCl", "WT", "PPI", "UM")) {
-    n <- nrow(data_with_missing)
-    n_missing <- round(n * perc / 100)
-    missing_rows <- sample(1:n, n_missing, replace = FALSE)
-    data_with_missing[missing_rows, var] <- NA
-  }
+  data_with_missing <- introduce_missing_data(data_with_missing, "CrCl", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "WT", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "PPI", perc)
+  data_with_missing <- introduce_missing_data(data_with_missing, "UM", perc)
   missing_data_list[[paste0("missing_", perc, "perc")]] <- data_with_missing
 }
 
-# Define your list of missing data percentages for plot titles
+
+
+# Define your list of missing data percentages
 missing_percentages <- c("5%", "20%", "50%", "75%")
 
 # Loop over each dataframe in missing_data_list and save each plot as PNG
@@ -1075,7 +1093,7 @@ for (i in 1:length(missing_data_list)) {
   # Increase the top margin to make space for the title
   par(mar = c(5, 5, 10, 5))  # Increase top margin to 10 for title space
   
-  # Generate the aggr plot (assuming the aggr function is from the VIM package)
+  # Generate the aggr plot
   aggr(selected_data, numbers = TRUE, sortVars = TRUE, 
        prop = TRUE, cex.axis = 2, cex.lab = 2, cex.numbers = 2, gap = 5, 
        labels = c("UM", "CrCl", "PPI", "WT"), combined = FALSE, 
@@ -1088,7 +1106,8 @@ for (i in 1:length(missing_data_list)) {
   dev.off()
 }
 
-# Load the 4 PNG images in the correct order (assuming the magick package is used)
+
+# Load the 4 PNG images in the correct order
 img1 <- image_read("Missing_Data_5.png")
 img2 <- image_read("Missing_Data_20.png")
 img3 <- image_read("Missing_Data_50.png")
@@ -1108,13 +1127,16 @@ image_write(combined_img, path = "Combined_Missing_Data_Final.png")
 
 
 
+# Define the columns you want to use for imputation
+selected_columns <- c(1:9, 15)  # Columns: ID, time, 3:9, and DV (column 14)
+
 
 # Initialize the list for storing imputed data
 mice_imputed_data_list <- list()
 
 # Define the imputation methods:
 # pmm for WT and CrCl (continuous), logreg for PPI and UM (binomial),
-mice_imputation_methods <- c("", "","","pmm","", "pmm","", "logreg","logreg","")
+mice_imputation_methods <- c("", "","","","","pmm","pmm", "logreg","logreg","")
 
 # Loop through each dataframe with missing data for imputation
 for (i in 1:length(missing_data_list)) {
@@ -1134,6 +1156,7 @@ for (i in 1:length(missing_data_list)) {
   mice_imputed_data <- mice(
     mice_df_subset, 
     m = 5,  # Perform multiple imputations
+    maxit = 20,
     method = mice_imputation_methods,  # Imputation methods for each variable
     predictorMatrix = mice_predictorMatrix, 
     seed = 500
@@ -1160,10 +1183,10 @@ for (i in 1:length(missing_data_list)) {
 }
 
 # Set your working directory to the folder containing the files
-setwd("D:/MOBILITE/1er papier - Simulation Covariables/imputed_datasets_merged")
 
-# Read the 'final_data' file into a dataframe
-final_data <- read.csv("final_data.csv")  # Adjust the file extension if necessary
+setwd("C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1")
+write.csv(final_data,"final_data.csv")
+
 
 # Function to read files with a specific prefix into a list
 read_imputed_data <- function(prefix) {
@@ -1181,6 +1204,7 @@ read_imputed_data <- function(prefix) {
   
   return(data_list)
 }
+
 
 
 
@@ -1269,6 +1293,9 @@ mice_combined_data <- cbind(
 
 # View the combined dataframe
 mice_combined_data
+
+
+
 
 
 
@@ -1467,11 +1494,6 @@ for (i in seq_along(MIDAS_imputed_data_list)) {
 
 
 
-for (i in seq_along(missing_data_list)) {
-  missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
-  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM)) - 1  # Convert UM to numeric and reduce by 1
-}
-
 
 
 
@@ -1522,11 +1544,11 @@ for (i in 1:length(missing_data_list)) {
   CrCl_error <- imputed_CrCl %>%
     left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl.y,
            AE_CrCl = abs(CrCl_imputed - CrCl_original),
            PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
-           Imputation_Method = "MIDAS");
+           Imputation_Method = "MIDAS")
 
   # Match imputed with original data and compute concordance for PPI
 PPI_conc <- imputed_PPI %>%
@@ -1569,6 +1591,12 @@ MIDAS_combined_data <- cbind(
 MIDAS_combined_data
 
 
+
+
+for (i in seq_along(missing_data_list)) {
+  missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI)) - 1  # Convert PPI to numeric and reduce by 1
+  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM)) - 1  # Convert UM to numeric and reduce by 1
+}
 
 
 
@@ -1671,7 +1699,7 @@ for (i in 1:length(missing_data_list)) {
   CrCl_error <- imputed_CrCl %>%
     left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl.y,
            AE_CrCl = abs(CrCl_imputed - CrCl_original),
            PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
@@ -1724,10 +1752,6 @@ amelia_combined_data
 
 
 
-for (i in seq_along(missing_data_list)) {
-  missing_data_list[[i]]$PPI <- as.numeric(as.character(missing_data_list[[i]]$PPI))   # Convert PPI to numeric 
-  missing_data_list[[i]]$UM <- as.numeric(as.character(missing_data_list[[i]]$UM))  # Convert UM to numeric 
-}
 
 
 # Initialize the list to store imputed datasets
@@ -1927,7 +1951,7 @@ for (i in 1:length(missing_data_list)) {
   WT_error <- imputed_WT %>%
     left_join(final_data %>% select(ID, WT), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(WT_imputed = WT.x, WT_original = WT,
+    mutate(WT_imputed = WT.x, WT_original = WT.y,
            AE_WT = abs(WT_imputed - WT_original),
            PE_WT = (WT_imputed - WT_original) / WT_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
@@ -1937,7 +1961,7 @@ for (i in 1:length(missing_data_list)) {
   CrCl_error <- imputed_CrCl %>%
     left_join(final_data %>% select(ID, CrCl), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl,
+    mutate(CrCl_imputed = CrCl.x, CrCl_original = CrCl.y,
            AE_CrCl = abs(CrCl_imputed - CrCl_original),
            PE_CrCl = (CrCl_imputed - CrCl_original) / CrCl_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
@@ -2025,25 +2049,31 @@ all_datasets <- list(
   MIDAS_imputed_data_list[[4]]
 )
 
+
+
+missing_percentages2 <- gsub(" NA", "", missing_percentages)
+
+
 # Assign names to datasets
 dataset_names <- c(
   "Original Data",
   
   # Mice datasets with missing percentages
-  paste0("Mice ", missing_percentages),
+  paste0("Mice Missing Percentage: ", missing_percentages2),
   
   # Amelia datasets
-  paste0("Amelia ", missing_percentages),
+  paste0("Amelia Missing Percentage: ", missing_percentages2),
   
   # MF datasets
-  paste0("MF ", missing_percentages),
+  paste0("MF Missing Percentage: ", missing_percentages2),
   
   # XGB datasets
-  paste0("XGB ", missing_percentages),
+  paste0("XGB Missing Percentage: ", missing_percentages2),
   
   # MIDAS datasets
-  paste0("MIDAS ", missing_percentages)
+  paste0("MIDAS Missing Percentage: ", missing_percentages2)
 )
+
 
 
 # Ensure that the number of datasets matches the number of names
@@ -2283,7 +2313,7 @@ dev.off()
 methods <- c('Mice', 'Amelia', 'MF', 'XGB', 'MIDAS')
 
 # Define the missing percentages
-missing_percentages <- c('0% NA', '5% NA', '20% NA', '50% NA', '75% NA')
+missing_percentages <- c('Missing Percentage: 0%', 'Missing Percentage: 5%', 'Missing Percentage: 20%', 'Missing Percentage: 50%', 'Missing Percentage: 75%')
 
 # Extract 'final_data' from the list
 final_data <- all_datasets[[1]]  # Assuming 'final_data' is the first in the list
@@ -2292,7 +2322,7 @@ final_data <- all_datasets[[1]]  # Assuming 'final_data' is the first in the lis
 final_data_replicates <- lapply(methods, function(method) {
   df <- final_data
   df$Imputation_Method <- method
-  df$Missing_Percentage <- '0% NA'
+  df$Missing_Percentage <- 'Original Data'
   # Keep only the 'WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage' columns
   df <- df[, c('WT', 'CrCl', 'ID', 'Imputation_Method', 'Missing_Percentage')]
   return(df)
@@ -2337,7 +2367,13 @@ rownames(long_df) <- NULL
 
 # View the first few rows of the long-format data frame
 head(long_df)
-
+long_df$Missing_Percentage <- factor(long_df$Missing_Percentage,
+  levels = c("Original Data", 
+             "Missing Percentage: 5%", 
+             "Missing Percentage: 20%", 
+             "Missing Percentage: 50%", 
+             "Missing Percentage: 75%")
+)
 
 # Define the plotting function
 plot_histogram_with_gaussian_and_density_fixed <- function(data, variable, variable_name) {
@@ -2425,7 +2461,7 @@ plot_WT <- plot_histogram_with_gaussian_and_density_fixed(long_df, "WT", "Weight
 plot_CrCl <- plot_histogram_with_gaussian_and_density_fixed(long_df, "CrCl", "Creatinine Clearance")
 
 
-png("WT_CrCl_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
+png("WT_CrCl_Distribution.png", width = 16, height = 18, units = 'in', res = 900)
 ggarrange(plot_WT,plot_CrCl,nrow=2,common.legend=TRUE)
 dev.off()
 
