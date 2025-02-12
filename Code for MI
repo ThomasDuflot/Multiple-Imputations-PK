@@ -34,6 +34,17 @@ library(ggcorrplot)
 
 
 
+my_theme <- theme_minimal(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 18, color = "black"),      # Axis labels size and color
+    axis.text = element_text(size = 16, color = "black"),       # Axis ticks size and color
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines size
+    legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
+    legend.text = element_text(size = 16, color = "black")      # Legend text size and color
+  )
+
+
+
 set.seed(123)
 url <- "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BIOPRO.xpt"
 download.file(url, destfile = "DEMO_I.XPT", mode = "wb")
@@ -309,7 +320,7 @@ errorModelRespPK = Combined1( outcome = "RespPK", sigmaInter = 0.1, sigmaSlope =
 modelError = list( errorModelRespPK )
 
 ## sampling times
-samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25,0.5,0.75,1,2,4,8,32,32.25,32.5,32.75,33,34,36,40))
+samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25,0.5,4,36,40))
 
 # arm
 administrationRespPK = Administration( outcome = "RespPK", tau=8, dose = c( 100 ))
@@ -337,13 +348,10 @@ evaluationPop = Evaluation( name = "",
 evaluationPop = run( evaluationPop )
 
 
-outputPath = "D:/MOBILITE"
-outputFile = "EvaluationPopFIM.html"
-plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL") )
-
-Report( evaluationPop, outputPath, outputFile, plotOptions )
-
-
+plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL"))
+outputPath = "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1"
+outputFile = "EvaluationPopFIMR1.html"
+Report( optimizationPopFIM, outputPath, outputFile, plotOptions )
 
 
 # constraints
@@ -547,7 +555,7 @@ administrationRespPK = Administration( outcome = "RespPK",
 
 ## sampling times
 samplingTimesRespPK = SamplingTimes( outcome = "RespPK",
-                                     samplings =  	c(0.25, 0.5, 4, 28, 32))
+                                     samplings =  	c(0.25, 0.5, 4, 36, 40))
 
 ## arms
 arm1 = Arm( name = "BrasTest",
@@ -871,6 +879,17 @@ save_my_fig(PowerRelev.plot, fig_file_name, pfimResultGeneralPath)
 
 
 
+my_theme <- theme_minimal(base_size = 16) +
+  theme(
+    axis.title = element_text(size = 18, color = "black"),      # Axis labels size and color
+    axis.text = element_text(size = 16, color = "black"),       # Axis ticks size and color
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines size
+    legend.title = element_text(size = 18, color = "black"),    # Legend title size and color
+    legend.text = element_text(size = 16, color = "black")      # Legend text size and color
+  )
+
+
+
 # Define the PK model
 code <- '
 
@@ -1021,39 +1040,25 @@ final_data_mice$UM<-as.factor(as.character(final_data_mice$UM))
 selected_columns <- c(1:9, 15)  # Columns: ID, time, 3:9, and DV (column 14)
 
 
-
+# Define the percentages of missing data to generate
+percentages <- c(5, 20, 50, 75)
 
 # Create a list to store dataframes with different percentages of missing data
 missing_data_list <- list()
 
-# Define the percentages of missing data to generate (5%, 20%, 50% and 75%)
-percentages <- c(5, 20, 50,75)
-
-# Get the unique IDs and the number of individuals
-unique_ids <- unique(final_data$ID)
-n_individuals <- length(unique_ids)
-
-# Step 1: Create missing data for WT, CrCl, and PPI
-introduce_missing_data <- function(df, variable, percentage) {
-  n_missing <- round(n_individuals * percentage / 100)
-  individuals_to_missing <- sample(unique_ids, n_missing, replace = FALSE)
-  df[df$ID %in% individuals_to_missing, variable] <- NA
-  return(df)
-}
-
 # Loop over each percentage and generate the corresponding dataframe with missing data
 for (perc in percentages) {
   data_with_missing <- final_data_mice
-  data_with_missing <- introduce_missing_data(data_with_missing, "CrCl", perc)
-  data_with_missing <- introduce_missing_data(data_with_missing, "WT", perc)
-  data_with_missing <- introduce_missing_data(data_with_missing, "PPI", perc)
-  data_with_missing <- introduce_missing_data(data_with_missing, "UM", perc)
+  for (var in c("CrCl", "WT", "PPI", "UM")) {
+    n <- nrow(data_with_missing)
+    n_missing <- round(n * perc / 100)
+    missing_rows <- sample(1:n, n_missing, replace = FALSE)
+    data_with_missing[missing_rows, var] <- NA
+  }
   missing_data_list[[paste0("missing_", perc, "perc")]] <- data_with_missing
 }
 
-
-
-# Define your list of missing data percentages
+# Define your list of missing data percentages for plot titles
 missing_percentages <- c("5%", "20%", "50%", "75%")
 
 # Loop over each dataframe in missing_data_list and save each plot as PNG
@@ -1070,7 +1075,7 @@ for (i in 1:length(missing_data_list)) {
   # Increase the top margin to make space for the title
   par(mar = c(5, 5, 10, 5))  # Increase top margin to 10 for title space
   
-  # Generate the aggr plot
+  # Generate the aggr plot (assuming the aggr function is from the VIM package)
   aggr(selected_data, numbers = TRUE, sortVars = TRUE, 
        prop = TRUE, cex.axis = 2, cex.lab = 2, cex.numbers = 2, gap = 5, 
        labels = c("UM", "CrCl", "PPI", "WT"), combined = FALSE, 
@@ -1083,8 +1088,7 @@ for (i in 1:length(missing_data_list)) {
   dev.off()
 }
 
-
-# Load the 4 PNG images in the correct order
+# Load the 4 PNG images in the correct order (assuming the magick package is used)
 img1 <- image_read("Missing_Data_5.png")
 img2 <- image_read("Missing_Data_20.png")
 img3 <- image_read("Missing_Data_50.png")
@@ -1101,6 +1105,7 @@ print(combined_img)
 
 # Optionally, save the combined image as a PNG
 image_write(combined_img, path = "Combined_Missing_Data_Final.png")
+
 
 
 
