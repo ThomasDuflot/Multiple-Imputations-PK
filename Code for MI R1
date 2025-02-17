@@ -320,7 +320,7 @@ errorModelRespPK = Combined1( outcome = "RespPK", sigmaInter = 0.3, sigmaSlope =
 modelError = list( errorModelRespPK )
 
 ## sampling times
-samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25, 3, 4, 11, 12)   )
+samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25, 0.5, 4, 11, 12)   )
 
 # arm
 administrationRespPK = Administration( outcome = "RespPK", dose = c( 100 ))
@@ -2926,7 +2926,7 @@ head(names(merged_imputed_data_list))
 dosing_times <- c(0)
 
 # Define the allowed times for rows with amt = 0, evid = 0
-allowed_times <- c(0.25,3,4,11,12)
+allowed_times <- c(0.25,0.5,4,11,12)
 
 # Function to add columns and rows for each dataset and remove unwanted rows
 modify_dataset_add_rows <- function(data) {
@@ -4116,14 +4116,18 @@ group_by(id) %>%
 all_data_subset <- all_data[!names(all_data) %in% "mrgsolv_val"]
 
 # Now map over only those elements that actually have $parameters
-mlx_val_list <- map(all_data_subset, ~ .x$parameters %>%
-  group_by(id) %>%
-  dplyr::slice(1) %>%
-  select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
-  ungroup()
+mlx_val_list <- map(
+  all_data_subset,
+  ~ .x$parameters %>%
+    group_by(id) %>%
+    dplyr::slice(1) %>%
+    select(ID = id, CL = Cl_mode, VC = V_mode, KA = ka_mode) %>%
+    ungroup()
+)
 
-# Step 2: Combine all extracted data into a single dataframe
-combined_mlx_val <- bind_rows(mlx_val_list, .id = "source")  # Adds a column source indicating the source dataframe
+# 2) Combine all extracted data frames into one, and remove "MLX_" prefix from source
+combined_mlx_val <- bind_rows(mlx_val_list, .id = "source") %>%
+  mutate(source = sub("^MLX_", "", source))
 
 # Step 3: Update source to readable missing percentage levels and imputation methods
 combined_mlx_val <- combined_mlx_val %>%
@@ -4136,16 +4140,16 @@ combined_mlx_val <- combined_mlx_val %>%
       grepl("_4$", source) ~ "75% NA"
     ),
     Imputation_Method = case_when(
-      grepl("amelia", source) ~ "Amelia",
-      grepl("MF", source) ~ "MF",
-      grepl("mice", source) ~ "mice",
-      grepl("midas", source) ~ "MIDAS",
-      grepl("xgb", source) ~ "XGB",
-      source == "final_data" ~ "Final Data"
+      grepl("amelia", source, ignore.case = TRUE) ~ "Amelia",
+      grepl("MF", source, ignore.case = TRUE)     ~ "MF",
+      grepl("mice", source, ignore.case = TRUE)   ~ "mice",
+      grepl("midas", source, ignore.case = TRUE)  ~ "MIDAS",
+      grepl("xgb", source, ignore.case = TRUE)    ~ "XGB",
+      source == "final_data"                      ~ "Final Data"
     )
   )
 
-# Step 4: Duplicate "0% NA" data for each imputation method and remove the original "Final Data" rows
+# Step 4: Duplicate "0% NA" data for each imputation method and remove original "Final Data" rows
 final_data_rows <- combined_mlx_val %>%
   filter(Missing_Percentage == "0% NA") %>%
   select(-Imputation_Method) %>%
@@ -4161,124 +4165,137 @@ combined_mlx_val <- combined_mlx_val %>%
     Missing_Percentage = factor(Missing_Percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA"))
   )
 
+# Rename VC column to V
 colnames(combined_mlx_val)[colnames(combined_mlx_val) == "VC"] <- "V"
 
-# Replace values in the Imputation_Method column
+# Optionally replace method labels if they're still in lowercase in your data
 combined_mlx_val <- combined_mlx_val %>%
-    mutate(Imputation_Method = recode(Imputation_Method,
-        "amelia" = "Amelia",
-        "mf" = "MF",
-        "mice" = "Mice",
-        "midas" = "MIDAS",
-        "xgb" = "XGB"
-    ))
+  mutate(
+    Imputation_Method = recode(
+      Imputation_Method,
+      "amelia" = "Amelia",
+      "mf"     = "MF",
+      "mice"   = "Mice",
+      "midas"  = "MIDAS",
+      "xgb"    = "XGB"
+    )
+  )
 
 # Proceed with plotting
 plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, variable_name) {
     
-    # Set binwidth based on the variable
-    binwidth_value <- if (variable == "CL") 0.2 else if (variable == "V") 1 else 0.1
-    
-    # Compute per-group parameters for log-normal distribution
-    subset_params <- data %>%
-        filter(!!sym(variable) > 0) %>%
-        group_by(Missing_Percentage, Imputation_Method) %>%
-        summarize(
-            meanlog = mean(log(!!sym(variable)), na.rm = TRUE),
-            sdlog = sd(log(!!sym(variable)), na.rm = TRUE),
-            count = n(),
-            .groups = "keep"  # Retain grouping
-        )
-    
-    # Create a grid of x-values
-    x_grid <- seq(min(data[[variable]], na.rm = TRUE), max(data[[variable]], na.rm = TRUE), length.out = 100)
-    
-    # Compute log-normal density values per group
-    lognormal_data <- subset_params %>%
-        group_modify(~ {
-            meanlog = .x$meanlog[1]
-            sdlog = .x$sdlog[1]
-            count = .x$count[1]
-            # Handle cases where sdlog is NA or zero
-            if (is.na(sdlog) || sdlog == 0 || count < 2) {
-                return(data.frame(
-                    x = numeric(0),
-                    y = numeric(0)
-                ))
-            }
-            data.frame(
-                x = x_grid,
-                y = dlnorm(x_grid, meanlog, sdlog) * count * binwidth_value
-            )
-        })
-    
-    # Compute density estimates per group
-    density_data <- data %>%
-        group_by(Missing_Percentage, Imputation_Method) %>%
-        group_modify(~ {
-            if(nrow(.x) < 2){
-                return(data.frame(
-                    x = numeric(0),
-                    y = numeric(0)
-                ))
-            }
-            dens <- density(.x[[variable]], na.rm = TRUE)
-            data.frame(
-                x = dens$x,
-                y = dens$y * length(.x[[variable]]) * binwidth_value
-            )
-        })
-    
-    # Create the base plot
-    plot <- ggplot(data, aes_string(x = variable)) +
-        # Histogram
-        geom_histogram(aes(y = ..count.., fill = Imputation_Method),
-                       binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE) +
-        # Log-normal curve per group
-        geom_line(data = lognormal_data,
-                  aes(x = x, y = y, color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
-                  size = 1, show.legend = TRUE) +
-        # Density curve per group
-        geom_line(data = density_data,
-                  aes(x = x, y = y, color = "Density Estimate", linetype = "Density Estimate"),
-                  size = 1, alpha = 0.5, show.legend = TRUE) +
-        # Facet by Missing_Percentage and Imputation_Method
-        facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
-        # Add the color palette from ggsci
-        scale_fill_jco() +
-        # Add manual legends for Log-normal and Density Estimate
-        scale_linetype_manual(name = "Legend", values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")) +
-        scale_color_manual(name = "Legend", values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")) +
-        labs(title = paste("Distribution of", variable_name),
-             x = variable_name,
-             y = "Count") +
-        # Custom theme with spacing and legend
-        my_theme +
-        theme(
-            plot.title = element_text(hjust = 0.5, face = "bold"),
-            axis.title = element_text(size = 16),
-            axis.text = element_text(size = 14),
-            strip.text = element_text(face = "bold"),
-            panel.spacing = unit(1, "lines"),
-            legend.position = "top",
-            legend.key = element_rect(fill = "white", color = "black"),
-            legend.title = element_text(face = "bold"),
-            legend.text = element_text(size = 12),
-            panel.border = element_rect(color = "grey", fill = NA, size = 1),
-            strip.background = element_rect(fill = "grey", color = "grey", size = 1)
-        ) +
-        # Custom guides for the legend
-        guides(
-            fill = guide_legend(title = "Imputation Method"),
-            linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
-            color = "none"
-        )
-    
-    return(list(
-        plot = plot,
-        lognormal_data = lognormal_data,
-        density_data = density_data
-    ))
+  # Set binwidth based on the variable
+  binwidth_value <- if (variable == "CL") 0.2 else if (variable == "V") 1 else 0.1
+  
+  # Compute per-group parameters for log-normal distribution
+  subset_params <- data %>%
+    filter(!!sym(variable) > 0) %>%
+    group_by(Missing_Percentage, Imputation_Method) %>%
+    summarize(
+      meanlog = mean(log(!!sym(variable)), na.rm = TRUE),
+      sdlog   = sd(log(!!sym(variable)), na.rm = TRUE),
+      count   = n(),
+      .groups = "keep"  # Retain grouping
+    )
+  
+  # Create a grid of x-values
+  x_grid <- seq(min(data[[variable]], na.rm = TRUE), max(data[[variable]], na.rm = TRUE), length.out = 100)
+  
+  # Compute log-normal density values per group
+  lognormal_data <- subset_params %>%
+    group_modify(~ {
+      meanlog <- .x$meanlog[1]
+      sdlog   <- .x$sdlog[1]
+      count   <- .x$count[1]
+      
+      # Handle cases where sdlog is NA or zero
+      if (is.na(sdlog) || sdlog == 0 || count < 2) {
+        return(data.frame(x = numeric(0), y = numeric(0)))
+      }
+      data.frame(
+        x = x_grid,
+        y = dlnorm(x_grid, meanlog, sdlog) * count * binwidth_value
+      )
+    })
+  
+  # Compute density estimates per group
+  density_data <- data %>%
+    group_by(Missing_Percentage, Imputation_Method) %>%
+    group_modify(~ {
+      if (nrow(.x) < 2) {
+        return(data.frame(x = numeric(0), y = numeric(0)))
+      }
+      dens <- density(.x[[variable]], na.rm = TRUE)
+      data.frame(
+        x = dens$x,
+        y = dens$y * length(.x[[variable]]) * binwidth_value
+      )
+    })
+  
+  # Create the base plot
+  plot <- ggplot(data, aes_string(x = variable)) +
+    # Histogram
+    geom_histogram(
+      aes(y = ..count.., fill = Imputation_Method),
+      binwidth = binwidth_value, color = "black", alpha = 0.7, show.legend = TRUE
+    ) +
+    # Log-normal curve per group
+    geom_line(
+      data = lognormal_data,
+      aes(x = x, y = y, color = "Log-normal Distribution", linetype = "Log-normal Distribution"),
+      size = 1, show.legend = TRUE
+    ) +
+    # Density curve per group
+    geom_line(
+      data = density_data,
+      aes(x = x, y = y, color = "Density Estimate", linetype = "Density Estimate"),
+      size = 1, alpha = 0.5, show.legend = TRUE
+    ) +
+    # Facet by Missing_Percentage and Imputation_Method
+    facet_grid(Imputation_Method ~ Missing_Percentage, scales = "free_y") +
+    # Use the color palette from ggsci
+    scale_fill_jco() +
+    # Add manual legends for Log-normal and Density Estimate
+    scale_linetype_manual(
+      name = "Legend",
+      values = c("Density Estimate" = "solid", "Log-normal Distribution" = "solid")
+    ) +
+    scale_color_manual(
+      name = "Legend",
+      values = c("Log-normal Distribution" = "blue", "Density Estimate" = "red")
+    ) +
+    labs(
+      title = paste("Distribution of", variable_name),
+      x = variable_name,
+      y = "Count"
+    ) +
+    # Example custom theme
+    my_theme +
+    theme(
+      plot.title      = element_text(hjust = 0.5, face = "bold"),
+      axis.title      = element_text(size = 16),
+      axis.text       = element_text(size = 14),
+      strip.text      = element_text(face = "bold"),
+      panel.spacing   = unit(1, "lines"),
+      legend.position = "top",
+      legend.key      = element_rect(fill = "white", color = "black"),
+      legend.title    = element_text(face = "bold"),
+      legend.text     = element_text(size = 12),
+      panel.border    = element_rect(color = "grey", fill = NA, size = 1),
+      strip.background = element_rect(fill = "grey", color = "grey", size = 1)
+    ) +
+    # Custom guides
+    guides(
+      fill     = guide_legend(title = "Imputation Method"),
+      linetype = guide_legend(override.aes = list(color = c("red", "blue"), fill = "white")),
+      color    = "none"
+    )
+  
+  list(
+    plot          = plot,
+    lognormal_data = lognormal_data,
+    density_data   = density_data
+  )
 }
 
 # Example usage for CL
@@ -4287,22 +4304,28 @@ png("CL_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
 print(CL_Plot_fixed$plot)
 dev.off()
 
-
-
+# Example usage for V
 V_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "V", "V")
 png("V_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
-print(V_Plot_fixed)
+print(V_Plot_fixed$plot)
 dev.off()
 
+# Example usage for KA
 KA_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "KA", "KA")
 png("KA_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
-print(KA_Plot_fixed)
+print(KA_Plot_fixed$plot)
 dev.off()
 
+# Combined figure with all PK parameters
 png("PK_param_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
-ggarrange(KA_Plot_fixed$plot,V_Plot_fixed$plot,CL_Plot_fixed$plot,nrow=3,common.legend=TRUE)
+ggarrange(
+  KA_Plot_fixed$plot,
+  V_Plot_fixed$plot,
+  CL_Plot_fixed$plot,
+  nrow = 3,
+  common.legend = TRUE
+)
 dev.off()
-
 
 
 
@@ -4769,157 +4792,178 @@ for (dataset_name in names(all_data)) {
 
 # Check one dataset to ensure the computation worked
 head(all_data[["MLX_Amelia_1"]][["parameters"]])
-# Define the desired order of imputation methods
+library(dplyr)
+library(stringr)
+library(tidyr)
+
+# Desired order of imputation methods for final plots, tables, etc.
 desired_method_order <- c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")
 
-# =============================================================================
+################################################################################
 # Step 1: Extract PK parameters from all datasets and label them
-# =============================================================================
+################################################################################
 
 # Initialize a list to store the parameter data frames
 param_dfs <- list()
 
-# Process the final data (note: the name is now MLX_final_data)
+### 1A. Process the 'MLX_final_data' (the "Original Data")
 final_data_params <- all_data$MLX_final_data$parameters %>%
-  group_by(id) %>%
-  summarise(
-    CL = first(CL_fixed),
-    VC = first(VCpri),
-    KA = first(KApri)
+  dplyr::group_by(id) %>%
+  dplyr::summarise(
+    CL = dplyr::first(Cl_mode),
+    VC = dplyr::first(V_mode),
+    KA = dplyr::first(ka_mode)
   ) %>%
-  ungroup() %>%
-  rename(ID = id) %>%
-  mutate(
-    Missing_Percentage = factor("0%", levels = c("0%", "5%", "20%", "50%", "75%")),
-    Imputation_Method = factor("Original Data", levels = desired_method_order)
+  dplyr::ungroup() %>%
+  dplyr::rename(ID = id) %>%
+  # Label as '0% NA' + 'Original Data'
+  dplyr::mutate(
+    Missing_Percentage = factor("0% NA",
+                                levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+    Imputation_Method  = factor("Original Data", levels = desired_method_order)
   )
 
-# Add the final data to the list
+# Store the final data frame
 param_dfs[["Final Data"]] <- final_data_params
 
-# Get the names of the datasets to process (exclude MLX_final_data and mrgsolv_val)
+### 1B. Create a character vector of dataset names, excluding both "MLX_final_data" and "mrgsolv_val"
 dataset_names <- setdiff(names(all_data), c("MLX_final_data", "mrgsolv_val"))
 
 # Process each imputed dataset
 for (dataset_name in dataset_names) {
-  # Get the dataset
+  
+  # Extract the dataset from all_data
   dataset <- all_data[[dataset_name]]
+  
+  # If this dataset does not have $parameters, skip
+  if (is.null(dataset$parameters)) {
+    message(paste("Skipping", dataset_name, "because it has no 'parameters' component."))
+    next
+  }
   
   # Extract PK parameters
   params_df <- dataset$parameters %>%
-    group_by(id) %>%
-    summarise(
-      CL = first(CL_fixed),
-      VC = first(VCpri),
-      KA = first(KApri)
+    dplyr::group_by(id) %>%
+    dplyr::summarise(
+      CL = dplyr::first(Cl_mode),
+      VC = dplyr::first(V_mode),
+      KA = dplyr::first(ka_mode)
     ) %>%
-    ungroup() %>%
-    rename(ID = id)
+    dplyr::ungroup() %>%
+    dplyr::rename(ID = id)
   
-  # Remove the "MLX_" prefix (if present) for method detection
-  name_without_prefix <- sub("^MLX_", "", dataset_name)
+  # Remove "MLX_" prefix if present
+  short_name <- sub("^MLX_", "", dataset_name)
   
-  # Determine the Imputation_Method based on the dataset name
-  if (grepl("^Amelia", name_without_prefix, ignore.case = TRUE)) {
+  # Determine the Imputation_Method
+  if (grepl("Amelia", short_name, ignore.case = TRUE)) {
     method <- "Amelia"
-  } else if (grepl("^MF", name_without_prefix, ignore.case = TRUE)) {
+  } else if (grepl("MF", short_name, ignore.case = TRUE)) {
     method <- "MF"
-  } else if (grepl("^Mice", name_without_prefix, ignore.case = TRUE)) {
+  } else if (grepl("Mice", short_name, ignore.case = TRUE)) {
     method <- "Mice"
-  } else if (grepl("^MIDAS", name_without_prefix, ignore.case = TRUE)) {
+  } else if (grepl("MIDAS", short_name, ignore.case = TRUE)) {
     method <- "MIDAS"
-  } else if (grepl("^XGB", name_without_prefix, ignore.case = TRUE)) {
+  } else if (grepl("XGB", short_name, ignore.case = TRUE)) {
     method <- "XGB"
   } else {
-    stop(paste("Unknown method in dataset name:", dataset_name))
+    stop(paste("Unknown method in dataset name:", short_name))
   }
   
-  # Extract the missing percentage from the dataset name
-  # Assuming the dataset names end with '_1', '_2', '_3', or '_4'
-  if (grepl("_1$", dataset_name)) {
-    percentage <- "5%"
-  } else if (grepl("_2$", dataset_name)) {
-    percentage <- "20%"
-  } else if (grepl("_3$", dataset_name)) {
-    percentage <- "50%"
-  } else if (grepl("_4$", dataset_name)) {
-    percentage <- "75%"
+  # Extract the missing percentage from the trailing number (_1, _2, _3, _4)
+  # Assign "5% NA", "20% NA", etc.
+  if (grepl("_1$", short_name)) {
+    percentage <- "5% NA"
+  } else if (grepl("_2$", short_name)) {
+    percentage <- "20% NA"
+  } else if (grepl("_3$", short_name)) {
+    percentage <- "50% NA"
+  } else if (grepl("_4$", short_name)) {
+    percentage <- "75% NA"
   } else {
-    stop(paste("Could not determine Missing_Percentage for dataset:", dataset_name))
+    stop(paste("Could not determine Missing_Percentage for dataset:", short_name))
   }
   
-  # Add the new columns with the correct factor levels
+  # Add columns to params_df
   params_df <- params_df %>%
-    mutate(
-      Missing_Percentage = factor(percentage, levels = c("0%", "5%", "20%", "50%", "75%")),
-      Imputation_Method = factor(method, levels = desired_method_order)
+    dplyr::mutate(
+      Missing_Percentage = factor(percentage,
+                                  levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA")),
+      Imputation_Method  = factor(method, levels = desired_method_order)
     )
   
-  # Add the resulting data frame to the list
+  # Add to the list with the original dataset_name as key
   param_dfs[[dataset_name]] <- params_df
 }
 
-# =============================================================================
-# Step 2: Prepare the list of IDs with missing data from missing_data_list
-# =============================================================================
+# param_dfs now contains:
+# - "Final Data" for the Original Data
+# - One entry per imputed dataset (excluding those with no parameters)
+
+################################################################################
+# Step 2: Extract IDs with missing data for each missing percentage
+################################################################################
 
 # Initialize a list to store IDs with missing data
 missing_ids_list <- list()
 
-# Loop over each dataset in missing_data_list
+# Loop over each dataset in 'missing_data_list'
+# Expected naming in missing_data_list: e.g. "missing_5perc", "missing_20perc", ...
 for (dataset_name in names(missing_data_list)) {
-  # Extract the percentage from the dataset name
-  # Assuming dataset names are like "missing_5perc", "missing_20perc", etc.
+  
+  # Attempt to extract numeric percentage from the dataset name
+  # e.g. "missing_5perc" -> 5
   percentage_match <- str_extract(dataset_name, "\\d+")
   
   if (!is.na(percentage_match)) {
+    # Append " NA" to match param_dfs labeling
     percentage_value <- as.integer(percentage_match)
-    # Use the percentage value without "NA"
-    percentage <- paste0(percentage_value, "%")
+    # e.g. "5" -> "5% NA"
+    percentage <- paste0(percentage_value, "% NA")
   } else {
     stop(paste("Could not extract percentage from dataset name:", dataset_name))
   }
   
-  # Get the dataset with missing data
+  # Retrieve the dataset with missing data
   data_with_missing <- missing_data_list[[dataset_name]]
   
-  # Identify IDs with any missing data in key columns
+  # Identify IDs that have any missing data in WT, CrCl, PPI, or UM
   ids_with_missing <- data_with_missing %>%
     filter(is.na(WT) | is.na(CrCl) | is.na(PPI) | is.na(UM)) %>%
     select(ID) %>%
     distinct()
   
-  # Store the IDs in the list
+  # Store the IDs in the list, keyed by "5% NA", "20% NA", etc.
   missing_ids_list[[percentage]] <- ids_with_missing$ID
 }
 
-# =============================================================================
+################################################################################
 # Step 3: Perform comparisons for IDs with missing data
-# =============================================================================
+################################################################################
 
-# Define the comparison function
 compare_params <- function(imputed_df, final_df, ids_with_missing) {
-  # Filter both data frames to include only IDs with missing data
+  
+  # Filter both data frames to only the IDs with missing data
   imputed_df_filtered <- imputed_df %>% filter(ID %in% ids_with_missing)
-  final_df_filtered <- final_df %>% filter(ID %in% ids_with_missing)
+  final_df_filtered   <- final_df   %>% filter(ID %in% ids_with_missing)
   
-  # Ensure IDs are of the same type
+  # Convert ID to character if needed
   imputed_df_filtered$ID <- as.character(imputed_df_filtered$ID)
-  final_df_filtered$ID <- as.character(final_df_filtered$ID)
+  final_df_filtered$ID   <- as.character(final_df_filtered$ID)
   
-  # Join the two data frames and compute differences and percentage errors
+  # Inner join on ID
   comparison_df <- imputed_df_filtered %>%
     inner_join(final_df_filtered, by = "ID", suffix = c("_imputed", "_original")) %>%
     mutate(
       CL_diff = CL_imputed - CL_original,
       VC_diff = VC_imputed - VC_original,
       KA_diff = KA_imputed - KA_original,
-      CL_PE = (CL_imputed - CL_original) / CL_original * 100,
-      VC_PE = (VC_imputed - VC_original) / VC_original * 100,
-      KA_PE = (KA_imputed - KA_original) / KA_original * 100
+      CL_PE   = (CL_imputed - CL_original) / CL_original * 100,
+      VC_PE   = (VC_imputed - VC_original) / VC_original * 100,
+      KA_PE   = (KA_imputed - KA_original) / KA_original * 100
     )
   
-  return(comparison_df)
+  comparison_df
 }
 
 # Initialize a list to store comparison results
@@ -4928,86 +4972,73 @@ comparison_results <- list()
 # Loop over the imputed datasets (excluding 'Final Data')
 for (name in names(param_dfs)) {
   if (name != "Final Data") {
-    imputed_df <- param_dfs[[name]]
-    final_df <- param_dfs[["Final Data"]]
     
-    # Get the Imputation_Method and Missing_Percentage from the imputed dataset
-    method <- as.character(unique(imputed_df$Imputation_Method))
+    imputed_df <- param_dfs[[name]]
+    final_df   <- param_dfs[["Final Data"]]
+    
+    # Each imputed_df has exactly one method & missing percentage
+    method     <- as.character(unique(imputed_df$Imputation_Method))
     percentage <- as.character(unique(imputed_df$Missing_Percentage))
     
-    # Get the IDs with missing data for this percentage
+    # Retrieve the IDs with missing data for this percentage
     ids_with_missing <- missing_ids_list[[percentage]]
     
-    # Check if ids_with_missing is NULL or empty
-    if (is.null(ids_with_missing)) {
+    # If no such key or no IDs, skip
+    if (is.null(ids_with_missing) || length(ids_with_missing) == 0) {
       message(paste("No IDs with missing data found for", percentage))
-      next  # Skip to the next iteration
-    } else if (length(ids_with_missing) == 0) {
-      message(paste("IDs with missing data list is empty for", percentage))
-      next  # Skip to the next iteration
+      next
     }
     
-    # Ensure IDs are of the same type
+    # Ensure ID is character
     ids_with_missing <- as.character(ids_with_missing)
-    imputed_df$ID <- as.character(imputed_df$ID)
-    final_df$ID <- as.character(final_df$ID)
+    imputed_df$ID    <- as.character(imputed_df$ID)
+    final_df$ID      <- as.character(final_df$ID)
     
-    # Perform the comparison using the filtered IDs
+    # Perform the comparison
     comparison_df <- compare_params(imputed_df, final_df, ids_with_missing)
     
-    # Add metadata columns
+    # Tag with metadata
     comparison_df <- comparison_df %>%
       mutate(
-        Imputation_Method = factor(method, levels = desired_method_order),
-        Missing_Percentage = factor(percentage, levels = c("5%", "20%", "50%", "75%"))
+        Imputation_Method  = factor(method, levels = desired_method_order),
+        Missing_Percentage = factor(percentage,
+                                    levels = c("5% NA", "20% NA", "50% NA", "75% NA", "0% NA"))
       )
     
-    # Store the result
     comparison_results[[name]] <- comparison_df
   }
 }
 
-# Combine all comparison results into one data frame
+################################################################################
+# Step 4: Combine all comparison results
+################################################################################
+
 pk_param_comparison_combined <- bind_rows(comparison_results)
 
-# If there are any rows, ensure the factor levels are set appropriately
+# If pk_param_comparison_combined is empty, you'll have no columns to mutate.
 if (nrow(pk_param_comparison_combined) > 0) {
+  
+  # Final factor cleanup (if needed)
   pk_param_comparison_combined <- pk_param_comparison_combined %>%
     mutate(
-      Imputation_Method = factor(Imputation_Method, levels = desired_method_order),
-      Missing_Percentage = factor(Missing_Percentage, levels = c("5%", "20%", "50%", "75%"))
+      Imputation_Method  = factor(Imputation_Method,  levels = desired_method_order),
+      Missing_Percentage = factor(Missing_Percentage, levels = c("0% NA", "5% NA", "20% NA", "50% NA", "75% NA"))
     )
+  
 } else {
-  message("No comparison results to combine.")
+  message("No comparison data was generated (pk_param_comparison_combined is empty).")
+  # If you like, create empty factor columns for consistent structure:
+  pk_param_comparison_combined <- tibble(
+    ID                 = character(0),
+    CL_imputed         = numeric(0),
+    CL_original        = numeric(0),
+    # ... any other columns you'd expect ...
+    Imputation_Method  = factor(character(0), levels = desired_method_order),
+    Missing_Percentage = factor(character(0), levels = c("0% NA","5% NA","20% NA","50% NA","75% NA"))
+  )
 }
 
-# =============================================================================
-# Step 4: Reshape the data for plotting
-# =============================================================================
 
-# Reshape the data to have both Absolute Error and Percentage Error
-pk_params_long <- pk_param_comparison_combined %>%
-  pivot_longer(
-    cols = c(CL_diff, VC_diff, KA_diff, CL_PE, VC_PE, KA_PE),
-    names_to = c("Parameter", "ErrorType"),
-    names_pattern = "([A-Z]{2})_(.*)",
-    values_to = "ErrorValue"
-  ) %>%
-  mutate(
-    ErrorType = case_when(
-      ErrorType == "diff" ~ "Absolute Error",
-      ErrorType == "PE" ~ "Percentage Error"
-    ),
-    Parameter = factor(Parameter, levels = c("CL", "VC", "KA")),
-    ErrorType = factor(ErrorType, levels = c("Absolute Error", "Percentage Error")),
-    Imputation_Method = factor(Imputation_Method, levels = desired_method_order)
-  )
-
-# Change "VC" to "V" and reset factor levels
-pk_params_long <- pk_params_long %>%
-  mutate(Parameter = as.character(Parameter)) %>%
-  mutate(Parameter = ifelse(Parameter == "VC", "V", Parameter)) %>%
-  mutate(Parameter = factor(Parameter, levels = c("CL", "V", "KA")))
 
 # =============================================================================
 # Step 5: Create and save plots for each parameter
