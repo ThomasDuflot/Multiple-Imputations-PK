@@ -1,7 +1,6 @@
 library(lixoftConnectors)
 initializeLixoftConnectors(software = "monolix")
 library(mrgsolve)
-library(PopED)
 library(MASS) 
 library(dplyr) 
 library(ggplot2)
@@ -31,7 +30,7 @@ library(copula)
 library(fitdistrplus)
 library(corrplot)
 library(ggcorrplot)
-
+library(tools)
 
 setwd("C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1")
 
@@ -1245,6 +1244,70 @@ print(combined_img)
 
 # Optionally, save the combined image as a PNG
 image_write(combined_img, path = "Combined_Missing_Data_Final.png")
+
+# Initialize an empty list to store the missing summary for each dataset
+missing_summary_list <- list()
+
+# Loop through each dataset in missing_data_list
+for (i in seq_along(missing_data_list)) {
+  
+  # Get the current dataset
+  data_with_missing <- missing_data_list[[i]]
+  
+  # Count the number of missing covariates per row (UM, CrCl, PPI, WT)
+  data_with_missing$Missing_Count <- rowSums(is.na(data_with_missing[, c("UM", "CrCl", "PPI", "WT")]))
+  
+  # Compute the percentage of rows for each level of missing covariates (0 to 4)
+  missing_summary <- data_with_missing %>%
+    group_by(Missing_Count) %>%
+    summarise(Percentage = n() / nrow(data_with_missing) * 100) %>%
+    ungroup()
+  
+  # Store in the list with the name of the dataset
+  missing_summary_list[[names(missing_data_list)[i]]] <- missing_summary
+}
+
+# Combine all summaries into one dataframe for better visualization
+missing_summary_combined <- bind_rows(missing_summary_list, .id = "Dataset")
+
+# Print the missing summary
+print(missing_summary_combined)
+
+
+# Load required libraries
+library(flextable)
+library(officer)
+library(dplyr)
+
+# Ensure Missing_Count is a factor for correct ordering in the table
+missing_summary_combined <- missing_summary_combined %>%
+  mutate(Missing_Count = factor(Missing_Count, levels = 0:4, labels = c("0", "1", "2", "3", "4")))
+
+# Create a flextable for the missing covariates summary
+missing_summary_ft <- flextable(missing_summary_combined) %>%
+  theme_vanilla() %>%
+  autofit() %>%
+  set_caption("Summary of Simultaneous Missing Covariates") %>%
+  set_header_labels(
+    Dataset = "Dataset",
+    Missing_Count = "Number of Missing Covariates",
+    Percentage = "Percentage of Rows (%)"
+  )
+
+# Define the Word document
+doc <- read_docx() %>%
+  body_add_par("Missing Covariates Summary", style = "heading 1") %>%
+  body_add_flextable(missing_summary_ft)
+
+# Export to a Word file
+output_file <- "Missing_Covariates_Summary.docx"
+print(doc, target = output_file)
+
+# Confirm the export
+cat("Word document saved as:", output_file)
+
+
+
 
 
 
@@ -5550,7 +5613,7 @@ dev.off()
 
 
 
-library(dplyr)
+
 # Define the desired order of imputation methods
 imputation_methods <- c("Amelia", "MF", "Mice", "MIDAS", "XGB")
 
