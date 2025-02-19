@@ -408,19 +408,23 @@ rootDir = getwd()
 currentFolder = file.path(rootDir)
 
 
-# Create folder for PFIM results
-pfimResultFolder = "PFIM_results_6_1"
-pfimResultGeneralPath = file.path(currentFolder, pfimResultFolder)
-dir.create(pfimResultGeneralPath)
-
-################################################################################
-# ... load from PFIM6.1_beta_cov https://zenodo.org/records/14035205
+#
 
 USER_DEFINED_FUNCT = FALSE # Model evaluation in PFIM does not rely on a user defined function
 PARRALEL_FIM = FALSE # No parallel computation in PFIM
 
 pfimCovariatePath = file.path(rootDir, "PFIM_6_1_beta_cov")
 devtools::load_all(pfimCovariatePath)
+
+
+currentFolder = file.path(rootDir, "R1")
+
+
+
+# Create folder for PFIM results
+pfimResultFolder = "PFIM_results_6_1"
+pfimResultGeneralPath = file.path(currentFolder, pfimResultFolder)
+dir.create(pfimResultGeneralPath)
 
 
 ################################################################################
@@ -487,6 +491,7 @@ my_theme = theme_bw(base_size = 11) +
     axis.title=element_text(size=rel(1)),
     strip.text.x = element_text(size = rel(0.9)) #facet
   ) 
+
 ################################################################################
 # --- PFIM Set Up
 
@@ -551,12 +556,12 @@ modelError = list( errorModelRespPK )
 
 ## administration & multi-doses
 administrationRespPK = Administration( outcome = "RespPK",
-                                       tau = c(8),
+                                       timeDose = c(0),
                                        dose = c( 100 ) )
 
 ## sampling times
 samplingTimesRespPK = SamplingTimes( outcome = "RespPK",
-                                     samplings =  	c 	(0.25, 3, 4,11,12)   )
+                                     samplings =  	c(0.5, 4,5, 11, 12)   )
 
 ## arms
 arm1 = Arm( name = "BrasTest",
@@ -564,84 +569,32 @@ arm1 = Arm( name = "BrasTest",
             administrations = list( administrationRespPK ) ,
             samplingTimes   = list( samplingTimesRespPK ) )
 
-
-
 # --------------------------------------
 # Covariates
 # --------------------------------------
 
-
-mean_CLCR = mean(sim_data$CrCl)
-mean_WT = mean(sim_data$WT)
-
-sd_CLCR = sd(sim_data$CrCl)
-sd_WT = sd(sim_data$WT)
+median_CLCR = median(sim_data$CrCl)
+median_WT = median(sim_data$WT)
 
 
-PPI.P1 = mean(sim_data$PPI) # Proportion of PPI=1
-PPI.P0 = 1 - PPI.P1 # Proportion of PPI=0
+head(sim_data)
 
-UM.P1 = mean(sim_data$UM) # Proportion of UM=1
-UM.P0 = 1 - UM.P1 # Proportion of UM=0
-
-
-# Définir les moyennes et écarts-types pour chaque paramètre
-Height <- mean(sim_data$Height)  # cm
-Height_sd <- sd(sim_data$Height)
-
-WT <- mean(sim_data$WT)  # kg
-WT_sd <- sd(sim_data$WT)
-
-Alb <- mean(sim_data$Alb)  # g/L
-Alb_sd <- sd(sim_data$Alb)
-
-CLCR <- mean(sim_data$CrCl)  # mL/min/1.73m2
-CLCR_sd <- sd(sim_data$CrCl)
-
-Age <- mean(sim_data$Age)  #years
-Age_sd <- sd(sim_data$Age)
-
-# Matrice de corrélation entre les paramètres
-# Ajout de l'Age avec des corrélations hypothétiques avec Poids, Albumine et Fonction rénale
-cor_matrix <- cor(sim_data[1:5])
-
-# Moyennes des paramètres dans le même ordre que la matrice de corrélation
-moyennes <- c(Age, Height, Alb, CLCR, WT)
-
-# Écarts-types des paramètres
-sds <- c(Age_sd, Height_sd, Alb_sd, CLCR_sd, WT_sd)
-
-# Calcul de la matrice de covariance à partir de la matrice de corrélation et des écarts-types
-cov_matrix <- cor_matrix * (sds %*% t(sds))
-
-# Générer MC=1000 patients avec les distributions corrélées
-set.seed(123)  # Pour la reproductibilité
-MC = 1000
-sim_data_cov <- mvrnorm(n = MC, mu = moyennes, Sigma = cov_matrix)
-
-sim_data.df = data.frame(sim_data_cov)
-colnames(sim_data.df) = c("Age", "Height", "Alb", "CLCR","WT")
-head(sim_data.df)
-
-PFIM_covariates.df = sim_data.df %>%
-  dplyr::select(WT, CLCR) %>%
-  mutate(WT = log(WT/mean_WT),
-         CLCR = log(CLCR/mean_CLCR))
-
-PFIM_covariates.df$PPI = rbinom(MC, size = 1, prob = PPI.P1)
-PFIM_covariates.df$UM = rbinom(MC, size = 1, prob = UM.P1)
+PFIM_covariates.df = sim_data %>%
+  dplyr::select(WT, CrCl, PPI, UM) %>%
+  mutate(WT = log(WT/median_WT),
+         CLCR = log(CrCl/median_CLCR))
 
 PFIM_covariates.df = PFIM_covariates.df %>% 
   dplyr::select(CLCR, WT, PPI, UM)
 
 
 logtCLCR_ref = 0
-logtCLCR_P90 = log(qnorm(0.9, mean_CLCR, sd_CLCR)/mean_CLCR)
-logtCLCR_P10 = log(qnorm(0.1, mean_CLCR, sd_CLCR)/mean_CLCR)
+logtCLCR_P90 = log(quantile(sim_data$CrCl, probs = c(0.90))/median_CLCR)
+logtCLCR_P10 = log(quantile(sim_data$CrCl, probs = c(0.10))/median_CLCR)
 
 logtWT_ref = 0
-logtWT_P90 = log(qnorm(0.9, mean_WT, sd_WT)/mean_WT)
-logtWT_P10 = log(qnorm(0.1, mean_WT, sd_WT)/mean_WT)
+logtWT_P90 = log(quantile(sim_data$WT, probs = c(0.90))/median_WT)
+logtWT_P10 = log(quantile(sim_data$WT, probs = c(0.90))/median_WT)
 
 
 list_CovariateForRatio = list(
@@ -679,6 +632,7 @@ RatioOrder = c( "CLCR on Cl, P10", "CLCR on Cl, P90",
                 "WT on V, P10", "WT on V, P90",
                 "PPI on ka", "UM on Cl" )
 
+MC = nrow(PFIM_covariates.df)
 
 #CovariatePop
 CovariatePopType = "sampled"
@@ -764,7 +718,7 @@ powerRelevance.df_Latex = list_CovariateForRatioToDftoPlot(powerRelevance, LaTex
                         Covariate) ) %>%
   mutate(PRelev = round(PRelev, 2)) %>%
   arrange(Ratio) %>%
-  select(Ratio, PRelev) %>%
+  dplyr::select(Ratio, PRelev) %>%
   rename("P_{relev}" = PRelev)
 
 savetitle = "PowerRelevance"
@@ -834,7 +788,7 @@ df_for_power_Ninit =  tableRes(evaluation.Data)[1:nCov, ] %>%
   rename(
     Values = Value
   ) %>%
-  select(-Parameter, -RSE)
+  dplyr::select(-Parameter, -RSE)
 
 df_for_power_Ninit$Covariate = c("CLCR", "UM", "PPI", "WT")
 df_for_power_Ninit$Parameter = c("Cl", "Cl", "ka", "V")
@@ -947,7 +901,7 @@ for(N in N_list){
   powerSignificance_N$N = N
   
   powerSignificance_N_bind = powerSignificance_N %>%
-    select(Covariate, PSignificance, N)
+    dplyr::select(Covariate, PSignificance, N)
   
   allSignificance_df = rbind(allSignificance_df, powerSignificance_N_bind)
   
@@ -998,11 +952,76 @@ PowerRelev.plot = ggplot(allEquivalence_df, aes(x = N, y = PRelev, color = Ratio
 
 #...Save Plots
 fig_file_name = "PowerSignificance"
-save_my_fig(PowerSignif.plot, fig_file_name, pfimResultGeneralPath)
+save_my_fig(PowerSignif.plot, fig_file_name, pfimResultGeneralPath, width = 8, height = 4)
 
 
 fig_file_name = "PowerRelevance"
-save_my_fig(PowerRelev.plot, fig_file_name, pfimResultGeneralPath)
+save_my_fig(PowerRelev.plot, fig_file_name, pfimResultGeneralPath, width = 8, height = 4)
+
+
+################################################################################
+# --- Optimisation 
+
+# arm
+newAdministrationRespPK = Administration( outcome = "RespPK", dose = c( 100 ))
+
+
+## sampling times
+newSamplingTimesRespPK = SamplingTimes( outcome = "RespPK", 
+                                        samplings = c( 0.25, 0.5, 4, 11, 12 ))
+
+
+
+
+# constraints
+administrationConstraintsRespPK = AdministrationConstraints( outcome = "RespPK", doses = c( 100) )
+
+samplingConstraintsRespPK  = SamplingTimeConstraints( outcome = "RespPK",
+                                                      initialSamplings = c(0.25,0.5,0.75,1,1.5,2,3:12),
+                                                      numberOfsamplingsOptimisable = 5 )
+
+armConstr = Arm( name = "BrasConstr",
+                 size = 100,
+                 administrations = list( newAdministrationRespPK ) ,
+                 samplingTimes   = list( newSamplingTimesRespPK ), 
+                 administrationsConstraints = list( administrationConstraintsRespPK ),
+                 samplingTimesConstraints = list( samplingConstraintsRespPK ))
+
+
+designConstr = Design( name = "design1", 
+                       arms = list( armConstr ), 
+                       covariates = covariatePop )
+
+#...Multiplicative algorithm
+optimization.Mult = Optimization( name = "Opti_Rouen",
+                                  modelEquations = modelEquations,
+                                  modelParameters = modelParameters,
+                                  modelRelationships = modelRelationships,
+                                  modelError = modelError,
+                                  
+                                  
+                                  optimizer = "MultiplicativeAlgorithm",
+                                  optimizerParameters = list( lambda = 0.99,
+                                                              numberOfIterations = 1000,
+                                                              weightThreshold = 0.01,
+                                                              delta = 1e-04, showProcess = T ),
+                                  
+                                  designs = list( designConstr ),
+                                  fim = "population",
+                                  outcomes = list( "RespPK" = "RespPK" ),
+                                  odeSolverParameters = list( atol = 1e-8, rtol = 1e-8 ) )
+
+deb.Mult= Sys.time()
+optimization.Mult = run( optimization.Mult )
+fin.Mult = Sys.time()
+
+difftime(fin.Mult, deb.Mult) #Time difference of 1.006751 days
+
+
+optimization.Mult@optimizationResults
+
+saveOptiMultFIMpath = file.path(pfimResultGeneralPath, "optiMultFIM_Data.RData4")
+save(optimization.Mult, file = saveOptiMultFIMpath)
 
 ### End of L. FAYETTE PFIM 6.1 custom ###
 
