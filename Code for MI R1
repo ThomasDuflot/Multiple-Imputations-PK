@@ -754,13 +754,12 @@ sujRelev = subjectsPowerRelevance(evaluation.Data, alphalevel.relev,
 sujRelev.df = data.frame(Ratio = names(sujRelev),
                          N = as.vector(unlist(sujRelev)))
 save(sujRelev.df, file = file.path(pfimResultGeneralPath, paste0("NneededRelevance", ".RData")))
-
 sujRelev.df_Latex = sujRelev.df %>%
   rowwise() %>%
   mutate(
-    Ratio = paste0("", gsub(", ", ", ", Ratio, fixed=TRUE), ""),
-    Ratio = gsub("P10", "(P10)", Ratio, fixed=TRUE),
-    Ratio = gsub("P90", "(P90)", Ratio, fixed=TRUE),
+    Ratio = paste0("$", gsub(", ", "$, $", Ratio, fixed=TRUE), "$"),
+    Ratio = gsub("\\$P10\\$", "(P10)", Ratio),  # Properly escaping $
+    Ratio = gsub("\\$P90\\$", "(P90)", Ratio),  # Properly escaping $
     N = ceiling(N)
   )  %>%
   arrange(Ratio)
