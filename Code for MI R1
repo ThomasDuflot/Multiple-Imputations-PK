@@ -1736,7 +1736,7 @@ for (i in 1:length(missing_data_list)) {
   WT_error <- imputed_WT %>%
     left_join(final_data %>% select(ID, WT), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(WT_imputed = WT.x, WT_original = WT,
+    mutate(WT_imputed = WT.x, WT_original = WT.y,
            AE_WT = abs(WT_imputed - WT_original),
            PE_WT = (WT_imputed - WT_original) / WT_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
@@ -1891,7 +1891,7 @@ for (i in 1:length(missing_data_list)) {
   WT_error <- imputed_WT %>%
     left_join(final_data %>% select(ID, WT), by = "ID") %>%
     distinct(ID, .keep_all = TRUE) %>%
-    mutate(WT_imputed = WT.x, WT_original = WT,
+    mutate(WT_imputed = WT.x, WT_original = WT.y,
            AE_WT = abs(WT_imputed - WT_original),
            PE_WT = (WT_imputed - WT_original) / WT_original * 100,
            Missing_Values = factor(missing_percentages[i], levels = missing_percentages),
