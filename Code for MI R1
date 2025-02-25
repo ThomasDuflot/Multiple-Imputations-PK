@@ -6040,3 +6040,353 @@ doc <- body_add_flextable(doc, value = flextable_table)
 
 # Save the Word document to a file
 print(doc, target = "Statistical_Metrics_Table.docx")
+
+
+
+
+
+###For entertainment purposes, Code generating 100 pk model to get true RSE for all parameters ###
+
+
+
+simulate_and_run_model <- function(
+  copula_fit,          # e.g., fit_norm in your code
+  best_fits_list,      # list of the fitted parametric distributions
+  var_order,           # e.g., c("Age", "Height", "Alb", "CrCl", "WT")
+  mod,                 # your mrgsolve model object (modbsv)
+  dosing_amt = 100,    # dose amount
+  dosing_times = 0,    # time of dose
+  time_grid = seq(0, 12, by = 0.05),  # simulation times
+  filter_times = c(0, 0.5, 4, 5, 11, 12) # times to keep
+) {
+  
+  # 1) Draw from the copula (u-values)
+  n_sim <- 100  # You could parametrize this as well if needed
+  sim_u <- rCopula(n_sim, copula_fit@copula)
+  
+  # 2) Convert u-values into real data
+  simulate_from_fit <- function(u, dist_fit, var_name, reference_df) {
+    if (is.null(dist_fit)) {
+      # e.g., if Age is empirical
+      return(quantile(reference_df[[var_name]], u, type = 8))
+    }
+    dist_name <- dist_fit$distname
+    est <- dist_fit$estimate
+    
+    if (dist_name == "norm") {
+      return(qnorm(u, mean = est["mean"], sd = est["sd"]))
+    } else if (dist_name == "lnorm") {
+      return(qlnorm(u, meanlog = est["meanlog"], sdlog = est["sdlog"]))
+    } else if (dist_name == "gamma") {
+      return(qgamma(u, shape = est["shape"], rate = est["rate"]))
+    } else {
+      stop(paste("Distribution", dist_name, "not handled"))
+    }
+  }
+  
+  simulated_list <- list()
+  for (i in seq_along(var_order)) {
+    var_name <- var_order[i]
+    u_col    <- sim_u[, i]
+    dist_fit <- best_fits_list[[var_name]]
+    
+    sim_values <- simulate_from_fit(u_col, dist_fit, var_name, reference_df = final_df)
+    simulated_list[[var_name]] <- sim_values
+  }
+  
+  sim_data <- as.data.frame(simulated_list)
+  
+  # Add binary variables PPI and UM, plus ID
+  sim_data$PPI <- rbinom(n = n_sim, size = 1, prob = 0.3)
+  sim_data$UM  <- rbinom(n = n_sim, size = 1, prob = 0.5)
+  sim_data$ID  <- 1:n_sim
+  
+  # 3) Create an “expanded” data set for the time grid
+  expanded_sim_data <- sim_data[rep(1:nrow(sim_data), each = length(time_grid)), ]
+  expanded_sim_data$time <- rep(time_grid, nrow(sim_data))
+  
+  # Initialize columns for dose events
+  expanded_sim_data$amt  <- 0
+  expanded_sim_data$evid <- 0
+  expanded_sim_data$cmt  <- 0
+  
+  # Assign dosing
+  for (i_sub in 1:nrow(sim_data)) {
+    subject_rows <- expanded_sim_data$ID == sim_data$ID[i_sub]
+    expanded_sim_data$amt [subject_rows & expanded_sim_data$time %in% dosing_times]  <- dosing_amt
+    expanded_sim_data$evid[subject_rows & expanded_sim_data$time %in% dosing_times]  <- 1
+    expanded_sim_data$cmt [subject_rows & expanded_sim_data$time %in% dosing_times]  <- 1
+  }
+  
+  # 4) Run the model
+  out <- 
+    mod %>%
+    ev(ev(amt = dosing_amt, cmt = 1)) %>%  # baseline event, but this can be superseded by idata_set
+    idata_set(sim_data) %>%
+    mrgsim(delta = 0.05, end = 12, obsonly = TRUE)
+  
+  # Alternatively, if you prefer piping in your custom dataset that includes `time, evid, amt, cmt`,
+  # you can do something like `mrgsim_d(mod, data = expanded_sim_data, obsonly = TRUE)`.
+  # But that approach might require some additional steps (mapping columns, etc.). 
+  
+  # We'll merge to get the DV and other simulated states at each time
+  merged_data <- merge(expanded_sim_data, as.data.frame(out), by = c("ID", "time"))
+  
+  # 5) Filter to times of interest
+  final_data <- merged_data[merged_data$time %in% filter_times, ]
+  final_data <- final_data[order(final_data$ID, final_data$time), ]
+  
+  # Return the final dataset
+  return(final_data)
+}
+
+
+
+library(dplyr)
+n_reps <- 100
+
+all_results <- vector("list", length = n_reps)
+
+for(i in seq_len(n_reps)) {
+  cat("Running simulation", i, "\n")
+  tmp_data <- simulate_and_run_model(
+    copula_fit    = fit_norm,
+    best_fits_list= best_fits,
+    var_order     = var_order,
+    mod           = modbsv,        # your mrgsolve model
+    dosing_amt    = 100,
+    dosing_times  = 0,
+    time_grid     = seq(0, 12, by = 0.05),
+    filter_times  = c(0, 0.5, 4, 5, 11, 12)
+  )
+  
+  # Optionally add a column to track which replication:
+  tmp_data$sim_rep <- i
+  
+  all_results[[i]] <- tmp_data
+}
+
+# Combine everything into a single data frame
+final_combined <- bind_rows(all_results)
+
+
+# Make sure the folder exists (create it if needed)
+dir.create("C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1/Sim", showWarnings = FALSE, recursive = TRUE)
+
+# Loop over the list of data frames and write each one to a CSV
+for(i in seq_along(all_results)) {
+  out_file <- file.path(
+    "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1/Sim",
+    paste0("simulation_", i, ".csv")
+  )
+  write.csv(all_results[[i]], out_file, row.names = FALSE)
+  
+  cat("Saved:", out_file, "\n")
+}
+
+
+
+
+
+
+
+# List all CSV files in the data folder
+csv_files <- list.files(data_folder, pattern = "\\.csv$", full.names = TRUE)
+
+# Loop over each CSV file to create and run a Monolix project
+for (csv_file in csv_files) {
+  
+  # Generate a unique project name based on the CSV file name
+  proj_name <- paste0("MLX_", tools::file_path_sans_ext(basename(csv_file)))
+  cat("Creating project:", proj_name, "\n")
+  
+  # Create a new project from scratch using your CSV file and the model from the library
+  newProject(
+    data = list(
+      dataFile    = csv_file,
+      headerTypes = c("id", "time", "ignore", "ignore", "ignore", "contcov", "contcov", 
+                      "catcov", "catcov", "amount", "evid", "ignore", "ignore", "ignore", 
+                      "observation", "ignore", "ignore", "ignore", "ignore"),
+      mapping     = NULL
+    ),
+    modelFile = "lib:oral1_1cpt_kaVCl.txt"
+  )
+  
+  # Set population parameter initial values
+  setPopulationParameterInformation(
+    Cl_pop   = list(initialValue = 1),
+    V_pop    = list(initialValue = 10),
+    ka_pop   = list(initialValue = 1),
+    omega_Cl = list(initialValue = 0.15),
+    omega_V  = list(initialValue = 0.3),
+    omega_ka = list(initialValue = 0.5),
+    a        = list(initialValue = 0.3),
+    b        = list(initialValue = 0.15)
+  )
+  
+  # Add continuous transformed covariates
+  addContinuousTransformedCovariate(logtWEIGHT = "log(WT/82.58)")
+  addContinuousTransformedCovariate(logtCrCl  = "log(CrCl/106.33)")
+  
+  # Set the covariate model
+  setCovariateModel(
+    ka = c(PPI = TRUE),
+    V  = c(logtWEIGHT = TRUE),
+    Cl = c(logtCrCl = TRUE, UM = TRUE)
+  )
+  
+
+  # Define the analysis scenario tasks
+  scenario <- getScenario()
+  scenario$tasks <- c(
+    populationParameterEstimation   = TRUE,
+    conditionalModeEstimation       = TRUE,
+    conditionalDistributionSampling = TRUE,
+    standardErrorEstimation         = TRUE,
+    logLikelihoodEstimation         = TRUE
+  )
+  scenario$linearization <- FALSE
+  setScenario(scenario)
+  
+  # Run the full analysis
+  runScenario()
+  
+  # Save the project with a unique file name
+  project_file <- file.path(projects_folder, paste0(proj_name, ".mlxtran"))
+  saveProject(projectFile = project_file)
+  
+  cat("Completed project:", proj_name, "\n\n")
+}
+
+
+
+
+
+
+
+# Define the base directory where the Monolix folder is located
+base_dir <- "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1/Sim/Projects"
+
+# List all directories inside the Monolix folder (amelia_1, MF_1, etc.)
+subfolders <- list.dirs(base_dir, full.names = TRUE, recursive = FALSE)
+
+
+
+
+
+# Modify the function to import data as dataframes and keep them in a list
+import_monolix_data <- function(subfolder) {
+  # Paths to additional subfolders
+  log_likelihood_folder <- file.path(subfolder, "LogLikelihood")
+  tests_folder <- file.path(subfolder, "Tests")
+  
+  # Paths to main folder files
+  population_parameters_file <- file.path(subfolder, "populationParameters.txt")
+  predictions_file <- file.path(subfolder, "predictions.txt")
+  
+  # Paths to files in subfolders
+  log_likelihood_file <- file.path(log_likelihood_folder, "logLikelihood.txt")
+  correlation_file <- file.path(tests_folder, "correlationIndividualParametersCovariates.txt")
+  
+  # Path to the IndividualParameters folder
+  ind_param_folder <- file.path(subfolder, "IndividualParameters")
+  
+  # Initialize an empty list to store dataframes for each file
+  combined_data <- list()
+  
+  # Define the separator used in your .txt files (e.g., "\t" for tab-separated, "," for CSV)
+  separator <- ","  # Adjust this based on the actual file structure
+  
+  # Check if the folders and files exist and import them
+  if (dir.exists(ind_param_folder)) {
+    param_file <- file.path(ind_param_folder, "estimatedIndividualParameters.txt")
+    random_effects_file <- file.path(ind_param_folder, "estimatedRandomEffects.txt")
+    shrinkage_file <- file.path(ind_param_folder, "shrinkage.txt")
+    
+    if (file.exists(param_file)) {
+      param_data <- read.table(param_file, header = TRUE, sep = separator)
+      combined_data[["parameters"]] <- param_data
+    }
+    if (file.exists(random_effects_file)) {
+      random_effects_data <- read.table(random_effects_file, header = TRUE, sep = separator)
+      combined_data[["random_effects"]] <- random_effects_data
+    }
+    if (file.exists(shrinkage_file)) {
+      shrinkage_data <- read.table(shrinkage_file, header = TRUE, sep = separator)
+      combined_data[["shrinkage"]] <- shrinkage_data
+    }
+    if (file.exists(log_likelihood_file)) {
+      log_likelihood_data <- read.table(log_likelihood_file, header = TRUE, sep = separator)
+      combined_data[["log_likelihood"]] <- log_likelihood_data
+    }
+    if (file.exists(correlation_file)) {
+      correlation_data <- read.table(correlation_file, header = TRUE, sep = separator)
+      combined_data[["correlation"]] <- correlation_data
+    }
+    if (file.exists(population_parameters_file)) {
+      population_parameters_data <- read.table(population_parameters_file, header = TRUE, sep = separator)
+      combined_data[["population_parameters"]] <- population_parameters_data
+    }
+    if (file.exists(predictions_file)) {
+      predictions_data <- read.table(predictions_file, header = TRUE, sep = separator)
+      combined_data[["predictions"]] <- predictions_data
+    }
+    
+    return(combined_data)  # Return the list of dataframes for the subfolder
+  } else {
+    message("Folder not found: ", ind_param_folder)
+    return(NULL)
+  }
+}
+
+# Apply the function to each subfolder and store results in a list
+all_data <- lapply(subfolders, import_monolix_data)
+
+# Name the list elements with the subfolder names
+names(all_data) <- basename(subfolders)
+
+
+
+
+
+
+
+
+library(dplyr)
+
+# Suppose `all_data` is a list where each element is named like "MLX_simulation_1"
+# and contains a $population_parameters data frame
+
+all_params_list <- list()
+
+# Loop over names of all_data, e.g. "MLX_simulation_1", "MLX_simulation_2", ...
+for(nm in names(all_data)) {
+  # Extract the population_parameters data frame
+  df <- all_data[[nm]]$population_parameters
+  
+  # Keep only columns of interest
+  # e.g. parameter + value, and store the simulation name
+  df2 <- df %>%
+    select(parameter, value) %>%
+    mutate(simulation = nm)
+  
+  # Store in a list
+  all_params_list[[nm]] <- df2
+}
+
+# Combine everything into one long data frame
+all_params <- bind_rows(all_params_list)
+
+# Now for each parameter, compute mean, SD, CV% across simulations
+cv_summary <- all_params %>%
+  group_by(parameter) %>%
+  summarise(
+    mean_value = mean(value),
+    sd_value   = sd(value),
+    cv_percent = 100 * sd_value / mean_value,
+    n_sim      = n()
+  ) %>%
+  ungroup()
+
+cv_summary
+
