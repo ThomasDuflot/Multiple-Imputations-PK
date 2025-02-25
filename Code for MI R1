@@ -5639,7 +5639,7 @@ for (i in seq_along(mlxtran_files)) {
   
   # Load the Monolix project
   loadProject(project_file)
-  
+  runPopulationParameterEstimation()
   # Draw the VPC without stratification
   vpc_plot <- plotVpc(
     obsName = "DV",
@@ -5712,7 +5712,7 @@ combined_plot <- ggarrange(
 )
 
 
-png("pcVPC.png", width = 18, height = 12, units = 'in', res = 900)
+png("pcVPC.png", width = 30, height = 20, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
@@ -5937,7 +5937,7 @@ combined_plot <- annotate_figure(
 
 
 # Save the combined plot as a PNG
-png("ObsPred.png", width = 20, height = 12, units = 'in', res = 900)
+png("ObsPred.png", width = 28, height = 12, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
