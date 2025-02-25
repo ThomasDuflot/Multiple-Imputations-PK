@@ -4855,9 +4855,7 @@ for (dataset_name in names(all_data)) {
 
 # Check one dataset to ensure the computation worked
 head(all_data[["MLX_Amelia_1"]][["parameters"]])
-library(dplyr)
-library(stringr)
-library(tidyr)
+
 
 # Desired order of imputation methods for final plots, tables, etc.
 desired_method_order <- c("Amelia", "MF", "Mice", "MIDAS", "XGB", "Original Data")
@@ -4873,9 +4871,9 @@ param_dfs <- list()
 final_data_params <- all_data$MLX_final_data$parameters %>%
   dplyr::group_by(id) %>%
   dplyr::summarise(
-    CL = dplyr::first(Cl_mode),
-    VC = dplyr::first(V_mode),
-    KA = dplyr::first(ka_mode)
+    CL = first(CL_fixed),
+    VC = first(VCpri),
+    KA = first(KApri)
   ) %>%
   dplyr::ungroup() %>%
   dplyr::rename(ID = id) %>%
@@ -4908,9 +4906,9 @@ for (dataset_name in dataset_names) {
   params_df <- dataset$parameters %>%
     dplyr::group_by(id) %>%
     dplyr::summarise(
-      CL = dplyr::first(Cl_mode),
-      VC = dplyr::first(V_mode),
-      KA = dplyr::first(ka_mode)
+      CL = first(CL_fixed),
+      VC = first(VCpri),
+      KA = first(KApri)
     ) %>%
     dplyr::ungroup() %>%
     dplyr::rename(ID = id)
@@ -5101,11 +5099,34 @@ if (nrow(pk_param_comparison_combined) > 0) {
   )
 }
 
+pk_params_long <- pk_param_comparison_combined %>%
+  pivot_longer(
+    cols = c(CL_diff, VC_diff, KA_diff, CL_PE, VC_PE, KA_PE),
+    names_to = c("Parameter", "ErrorType"),
+    names_pattern = "([A-Z]{2})_(.*)",
+    values_to = "ErrorValue"
+  ) %>%
+  mutate(
+    ErrorType = case_when(
+      ErrorType == "diff" ~ "Absolute Error",
+      ErrorType == "PE" ~ "Percentage Error"
+    ),
+    Parameter = factor(Parameter, levels = c("CL", "VC", "KA")),
+    ErrorType = factor(ErrorType, levels = c("Absolute Error", "Percentage Error")),
+    Imputation_Method = factor(Imputation_Method, levels = desired_method_order)  # Ensure levels are set
+  )
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = as.character(Parameter))
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = ifelse(Parameter == "VC", "V", Parameter))
+
+pk_params_long <- pk_params_long %>%
+    mutate(Parameter = factor(Parameter, levels = c("CL", "V", "KA")))
 
 
-# =============================================================================
 # Step 5: Create and save plots for each parameter
-# =============================================================================
 
 # Function to create a plot for a given parameter
 create_parameter_plot <- function(param_name) {
@@ -5157,18 +5178,21 @@ for (param in parameters) {
   plots[[param]] <- create_parameter_plot(param)
 }
 
-# Arrange the plots in one row with three columns
+# Use ggarrange to arrange the plots in 3 rows
 final_plot <- ggarrange(
   plots[["CL"]], plots[["V"]], plots[["KA"]],
-  ncol = 3, nrow = 1,
-  labels = c("A", "B", "C"),
-  common.legend = TRUE, legend = "bottom"
+  ncol = 3, nrow = 1,  # Arrange in 3 rows
+  labels = c("A", "B", "C"),  # Add labels (optional)
+  common.legend = TRUE, legend = "bottom"  # Shared legend at the bottom
 )
 
 # Save the combined plot
 png("PKpri_Error_Comparison_All.png", width = 24, height = 13.5, units = 'in', res = 900)
 print(final_plot)
 dev.off()
+
+
+
 
 
 
