@@ -320,7 +320,7 @@ errorModelRespPK = Combined1( outcome = "RespPK", sigmaInter = 0.3, sigmaSlope =
 modelError = list( errorModelRespPK )
 
 ## sampling times
-samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.5, 4, 5, 11, 12)   )
+samplingTimesRespPK = SamplingTimes( outcome = "RespPK", samplings = c(0.25,0.5, 4, 11, 12)   )
 
 # arm
 administrationRespPK = Administration( outcome = "RespPK", dose = c( 100 ))
@@ -349,9 +349,9 @@ evaluationPop = run( evaluationPop )
 
 
 plotOptions = list( unitTime=c("hour"), unitResponses= c("mcg/mL"))
-outputPath = "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1"
-outputFile = "EvaluationPopFIMR1v4.html"
-PFIM::Report( evaluationPop, outputPath, outputFile, plotOptions )
+outputPath = "C:/Users/duflo/OneDrive/Bureau/AAPSJ-D-25-00020/R1/Sim"
+outputFile = "OptimizationPopFIMR1.html"
+Report( evaluationPop, outputPath, outputFile, plotOptions )
 
 
 # constraints
@@ -6379,14 +6379,36 @@ all_params <- bind_rows(all_params_list)
 
 # Now for each parameter, compute mean, SD, CV% across simulations
 cv_summary <- all_params %>%
+  # 1) Create a new column `value_mod` that is squared only if parameter is omega_Cl, omega_V, or omega_ka
+  mutate(
+    value_mod = if_else(
+      parameter %in% c("omega_Cl", "omega_V", "omega_ka"),
+      true  = value^2,
+      false = value
+    )
+  ) %>%
+  # 2) Summarize on the new `value_mod`
   group_by(parameter) %>%
   summarise(
-    mean_value = mean(value),
-    sd_value   = sd(value),
+    mean_value = mean(value_mod),
+    sd_value   = sd(value_mod),
     cv_percent = 100 * sd_value / mean_value,
     n_sim      = n()
   ) %>%
   ungroup()
 
-cv_summary
+
+# Make a flextable
+my_flextab <- flextable(cv_summary)
+my_flextab <- theme_vanilla(my_flextab)
+my_flextab <- autofit(my_flextab)
+
+# Create a doc and add the flextable
+doc <- read_docx()
+doc <- body_add_par(doc, "CV Summary across 100 simulations", style = "heading 1")
+doc <- body_add_flextable(doc, my_flextab)
+
+# Save
+print(doc, target = "cv_summaryv2.docx")
+
 
