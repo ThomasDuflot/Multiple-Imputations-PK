@@ -4364,6 +4364,16 @@ plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, vari
   )
 }
 
+combined_mlx_val$Missing_Percentage <- paste0(
+  "Missing Percentage: ",
+  combined_mlx_val$Missing_Percentage
+)
+
+
+combined_mlx_val$Missing_Percentage <- factor(
+  paste0("Missing Percentage: ", as.character(combined_mlx_val$Missing_Percentage))
+)
+
 # Example usage for CL
 CL_Plot_fixed <- plot_histogram_with_lognormal_and_density_fixed(combined_mlx_val, "CL", "CL")
 png("CL_Distribution.png", width = 16, height = 9, units = 'in', res = 900)
@@ -4383,7 +4393,7 @@ print(KA_Plot_fixed$plot)
 dev.off()
 
 # Combined figure with all PK parameters
-png("PK_param_Distribution.png", width = 12, height = 18, units = 'in', res = 900)
+png("PK_param_Distribution.png", width = 18, height = 18, units = 'in', res = 900)
 ggarrange(
   KA_Plot_fixed$plot,
   V_Plot_fixed$plot,
@@ -6435,4 +6445,134 @@ doc <- body_add_flextable(doc, my_flextab)
 # Save
 print(doc, target = "cv_summaryv2.docx")
 
+
+
+
+
+
+code <- '
+$PROB
+$PARAM @annotated
+TVCL : 1  : 1  Clearance (L.h-1)
+TVVC : 10  : 2  Central volume (L)
+TVKA : 1  : 3  Absorption constant (L)
+
+
+$PARAM @annotated @covariates
+
+WT : 70 : Weight (kg)
+CrCl : 90 : Creatinine clearance (mL/min/1.73m²)
+WT_VC : 1 : Weight on Vc ()
+CrCl_CL : 0.8 : Creatinine Clearance on CL
+PPI : 0 : PPI intake or not
+PPI_KA : 0.5 : Effect of Proton Pump Inhibitor on KA
+UM : 0 : Ultrarapid metabolizer
+UM_CL : 2 : Effect of UM on CL
+
+$CMT @annotated
+GUT : Depot compartment [ADM]
+CENTRAL : Central compartment (mg/L) [OBS]
+
+
+
+$TABLE
+double DV  = (CENTRAL / VC);
+
+
+$MAIN
+double CL = TVCL * pow((CrCl/90),CrCl_CL) * pow((UM_CL),UM)    ;
+double VC = TVVC * pow((WT/70),WT_VC)  ;
+double KA = TVKA * pow((PPI_KA),PPI)   ;
+double K10 = CL/VC ;
+
+
+
+$ODE
+
+dxdt_GUT        = -KA*GUT ;
+dxdt_CENTRAL    = KA*GUT - K10*CENTRAL ;
+
+$CAPTURE DV CL VC KA'
+
+mod <- mrgsolve::mcode("optim", code, atol=1e-8, rtol=1e-8,maxsteps=5000)
+
+
+
+
+
+ff <- function(model_switch, xt, p, poped.db){
+  times_xt <- drop(xt)  
+  dose_times <- 0
+  time <- sort(unique(c(times_xt,dose_times)))
+  is.dose <- time %in% dose_times
+  
+  data <- data.frame(
+    ID = 1,
+    time = time,
+    amt = ifelse(is.dose,p[["DOSE"]], 0), 
+    cmt = ifelse(is.dose, 1, 0)
+  )
+  
+  data[["evid"]] <- data[["cmt"]]
+  
+  mod <- param(mod, as.list(p))
+  
+  out <- mrgsim_q(mod,data)
+  
+  y <- out$DV[match(times_xt,out$time)]
+  
+  return(list(y=matrix(y,ncol=1),poped.db=poped.db))
+}
+  
+
+
+sfg.mrgsolve.cov <- function(x,a,bpop,b,bocc){
+  parameters=c(TVCL=bpop[1]*exp(b[1]),
+               TVVC=bpop[2]*exp(b[2]),
+               TVKA=bpop[3]*exp(b[3]),
+               WT_VC=bpop[4],
+               CrCl_CL=bpop[5],
+               PPI_KA=bpop[6],
+               UM_CL=bpop[7],
+               DOSE=a[1],
+               WT  =a[2],
+               CrCl =a[3],
+               PPI  =a[4],
+               UM = a[5])
+  return(parameters) 
+}
+
+
+feps <- function(model_switch,xt,parameters,epsi,poped.db){
+  returnArgs <- do.call(poped.db$model$ff_pointer,list(model_switch,xt,parameters,poped.db)) 
+  y <- returnArgs[[1]]
+  poped.db <- returnArgs[[2]]
+  
+  y = y*(1+epsi[,1])+epsi[,2]
+  
+  return(list( y= y,poped.db =poped.db )) 
+}
+
+
+poped.cov_mrg_poped <- create.poped.database(
+  ff_fun=ff,
+  fg_fun=sfg.mrgsolve.cov,
+  fError_fun=feps,
+  bpop=c(TVCL=1, TVVC=10,TVKA=1, WT_VC=1, CrCl_CL=0.8, PPI_KA=0.5, UM_CL=2), 
+  d=c(TVCL=0.15^2,TVVC=0.09,TVKA=0.25), 
+  notfixed_bpop=c(1,1,1,1,1,1,1),
+  sigma=c(prop=0.15^2,add=0.3^2),
+  notfixed_sigma=c(1,1),
+  m=100,
+  groupsize=1,
+  xt=c(0.5,4,5,11,12),
+  discrete_xt=c(0.5,4,5,11,12),
+  minxt=c(0),
+  maxxt=c(12),
+  a = cbind(DOSE=rep(100,100), WT=sim_data$WT, CrCl=sim_data$CrCl,PPI=sim_data$PPI,UM=sim_data$UM)
+)
+
+plot_model_prediction(poped.cov_mrg_poped,model_num_points = 500, PI=FALSE) + theme_bw()
+ev<-evaluate_design(fim.calc.type=4,poped.cov_mrg_poped)
+ev
 
