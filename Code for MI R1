@@ -3934,8 +3934,8 @@ parameter_mapping <- list(
   "omega_ka" = expression(omega[ka]),
   "omega_V" = expression(omega[V]),
   "omega_Cl" = expression(omega[CL]),
-  "a" = expression(italic(a)),
-  "b" = expression(italic(b))
+  "a" = expression(sigma[add]),
+  "b" = expression(sigma[prop])
 )
 
 plot_list <- list()
