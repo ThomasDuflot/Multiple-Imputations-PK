@@ -5309,7 +5309,7 @@ flextable_table <- flextable(combined_stats_wide) %>%
 
 doc <- read_docx()
 doc <- body_add_flextable(doc, value = flextable_table)
-print(doc, target = "Pop Param Pri Metrics.docx")
+print(doc, target = "Pop Param Pri Metrics v2.docx")
 
 
 
