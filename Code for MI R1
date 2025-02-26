@@ -594,7 +594,7 @@ logtCLCR_P10 = log(quantile(sim_data$CrCl, probs = c(0.10))/median_CLCR)
 
 logtWT_ref = 0
 logtWT_P90 = log(quantile(sim_data$WT, probs = c(0.90))/median_WT)
-logtWT_P10 = log(quantile(sim_data$WT, probs = c(0.90))/median_WT)
+logtWT_P10 = log(quantile(sim_data$WT, probs = c(0.10))/median_WT)
 
 
 list_CovariateForRatio = list(
@@ -939,13 +939,13 @@ PowerSignif.plot = ggplot(allSignificance_df[allSignificance_df$N<100,],
   geom_line() +
   scale_color_manual(values = Covariate.colors) +
   my_theme +
-  labs(x = "N", y = "P_{signif}")
+  labs(x = "N", y = "Psignif")
 
 PowerRelev.plot = ggplot(allEquivalence_df, aes(x = N, y = PRelev, color = Ratio)) +
   geom_line() +
   scale_color_manual(values = Ratio.colors) +
   my_theme +
-  labs(x = "N", y = "P_{relev}")
+  labs(x = "N", y = "Prelev")
 
 
 
