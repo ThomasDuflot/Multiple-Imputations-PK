@@ -5161,6 +5161,15 @@ create_parameter_plot <- function(param_name) {
       fill = "Imputation Method"
     ) +
     scale_color_jco() +
+scale_x_discrete(
+    labels = c(
+      "0% NA" = "0%", 
+      "5% NA" = "5%", 
+      "20% NA" = "20%", 
+      "50% NA" = "50%", 
+      "75% NA" = "75%"
+    )
+  ) +
     scale_fill_jco() +
     my_theme +
     theme(
