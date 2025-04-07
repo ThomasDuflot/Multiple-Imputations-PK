@@ -2777,6 +2777,15 @@ long_combined_data <- combined_data %>%
 
 
 
+my_theme <- theme_minimal(base_size = 20) +
+  theme(
+    axis.title = element_text(size = 20, color = "black"),      # Axis labels size and color
+    axis.text = element_text(size = 20, color = "black"),       # Axis ticks size and color
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines size
+    legend.title = element_text(size = 20, color = "black"),    # Legend title size and color
+    legend.text = element_text(size = 20, color = "black")      # Legend text size and color
+  )
+
 
 AEPE_plot<-ggplot(long_combined_data, aes(x = Missing_Values, y = value, fill = Imputation_Method)) +
   geom_boxplot(alpha = 0.7, outlier.shape = NA, color = "black", linewidth = 1.2) +  # Thicker boxplot borders
@@ -4339,14 +4348,14 @@ plot_histogram_with_lognormal_and_density_fixed <- function(data, variable, vari
     my_theme +
     theme(
       plot.title      = element_text(hjust = 0.5, face = "bold"),
-      axis.title      = element_text(size = 16),
-      axis.text       = element_text(size = 14),
+      axis.title      = element_text(size = 20),
+      axis.text       = element_text(size = 20),
       strip.text      = element_text(face = "bold"),
       panel.spacing   = unit(1, "lines"),
       legend.position = "top",
       legend.key      = element_rect(fill = "white", color = "black"),
       legend.title    = element_text(face = "bold"),
-      legend.text     = element_text(size = 12),
+      legend.text     = element_text(size = 20),
       panel.border    = element_rect(color = "grey", fill = NA, size = 1),
       strip.background = element_rect(fill = "grey", color = "grey", size = 1)
     ) +
@@ -4668,8 +4677,8 @@ create_parameter_plot <- function(param_name) {
     ) +
     facet_grid2(ErrorType ~ ., scales = "free", independent = "y") +  # Facet by ErrorType
     labs(
-      title = paste("Comparison of Absolute and Percentage Errors for", param_name),
-      x = "Percentage of Missing Data",
+      title = paste("Errors for", param_name),
+      x = "",
       y = "Error Value",
       fill = "Imputation Method"
     ) +
@@ -5155,8 +5164,8 @@ create_parameter_plot <- function(param_name) {
     ) +
     facet_grid2(ErrorType ~ ., scales = "free", independent = "y") +  # Facet by ErrorType
     labs(
-      title = paste("Comparison of Absolute and Percentage Errors for", param_name),
-      x = "Percentage of Missing Data",
+      title = paste("Errors for", param_name),
+      x = "Missing Data",
       y = "Error Value",
       fill = "Imputation Method"
     ) +
@@ -5206,12 +5215,22 @@ final_plot <- ggarrange(
 )
 
 # Save the combined plot
-png("PKpri_Error_Comparison_All.png", width = 24, height = 13.5, units = 'in', res = 900)
+png("PKpri_Error_Comparison_All.png", width = 16, height = 9, units = 'in', res = 900)
 print(final_plot)
 dev.off()
 
 
 
+my_theme <- theme_minimal(base_size = 20) +  # Slightly larger base size
+  theme(
+    axis.title = element_text(size = 22, color = "black"),      # Larger axis labels
+    axis.text = element_text(size = 22, color = "black"),       # Larger axis ticks
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines
+    legend.title = element_text(size = 22, color = "black"),    # Larger legend title
+    legend.text = element_text(size = 22, color = "black"),     # Larger legend text
+    plot.title = element_text(size = 22, face = "bold", hjust = 0.5),  # Larger centered title
+    strip.text = element_text(size = 22, face = "bold", color = "black")  # Larger facet text
+  )
 
 
 
@@ -5596,6 +5615,16 @@ dev.off()
 
 
 
+my_theme <- theme_minimal(base_size = 20) +  # Slightly larger base size
+  theme(
+    axis.title = element_text(size = 24, color = "black"),      # Larger axis labels
+    axis.text = element_text(size = 24, color = "black"),       # Larger axis ticks
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines
+    legend.title = element_text(size = 30, color = "black"),    # Larger legend title
+    legend.text = element_text(size = 30, color = "black"),     # Larger legend text
+    plot.title = element_text(size = 22, face = "bold", hjust = 0.5),  # Larger centered title
+    strip.text = element_text(size = 24, face = "bold", color = "black")  # Larger facet text
+  )
 
 
 
@@ -5731,7 +5760,7 @@ combined_plot <- ggarrange(
 )
 
 
-png("pcVPC.png", width = 30, height = 20, units = 'in', res = 900)
+png("pcVPC2.png", width = 30, height = 20, units = 'in', res = 900)
 print(combined_plot)
 dev.off()
 
@@ -5879,6 +5908,28 @@ individual_data <- all_predictions_long %>%
 # Step D: Create Plots
 # ------------------------------------------------------------------------------
 
+my_theme <- theme_minimal(base_size = 20) +  # Slightly larger base size
+  theme(
+    axis.title = element_text(size = 24, color = "black"),      # Larger axis labels
+    axis.text = element_text(size = 20, color = "black"),       # Larger axis ticks
+    axis.line = element_line(linewidth = 1.5),                  # Axis lines
+    legend.title = element_text(size = 24, color = "black"),    # Larger legend title
+    legend.text = element_text(size = 24, color = "black"),     # Larger legend text
+    plot.title = element_text(size = 24, face = "bold", hjust = 0.5),  # Larger centered title
+    strip.text = element_text(size = 24, face = "bold", color = "black")  # Larger facet text
+  )
+
+# Clean the 'Missing_Percentage' column in both dataframes
+population_data$Missing_Percentage <- gsub("Missing Percentage: ", "", as.character(population_data$Missing_Percentage))
+individual_data$Missing_Percentage <- gsub("Missing Percentage: ", "", as.character(individual_data$Missing_Percentage))
+
+# (Optional) Convert back to factor
+population_data$Missing_Percentage <- factor(population_data$Missing_Percentage)
+individual_data$Missing_Percentage <- factor(individual_data$Missing_Percentage)
+
+
+
+
 # Population Predictions plot
 population_plot <- ggplot(population_data, aes(x = Predicted_Value, y = DV, color = Imputation_Method)) +
   geom_point(alpha = 0.6, size = 1) +
@@ -5900,9 +5951,9 @@ scale_color_jco(
     axis.text.x = element_text(angle = 45, hjust = 1),
   legend.key.size = unit(1.5, "lines") , # Adjust as needed
     panel.spacing.y = unit(1, "cm"),
-    plot.title = element_text(size = 14, hjust = 0.5),  # Increase title size
-    legend.title = element_text(size = 14),             # Increase legend title size
-    legend.text = element_text(size = 12) ,
+    plot.title = element_text(size = 24, hjust = 0.5),  # Increase title size
+    legend.title = element_text(size = 24),             # Increase legend title size
+    legend.text = element_text(size = 24) ,
     panel.border = element_rect(colour = "black", fill = NA, size = 0.5)
   )
 
@@ -5925,12 +5976,13 @@ scale_color_jco(
     strip.background = element_rect(fill = "grey90", color = "grey50"),
     strip.text = element_text(face = "bold", color = "black"),
     axis.text.x = element_text(angle = 45, hjust = 1),
-  legend.key.size = unit(1.5, "lines"),  # Adjust as needed
+  legend.key.size = unit(1.5, "lines") , # Adjust as needed
     panel.spacing.y = unit(1, "cm"),
-    panel.border = element_rect(colour = "black", fill = NA, size = 0.5),
-    plot.title = element_text(size = 14, hjust = 0.5),  # Increase title size
-    legend.title = element_text(size = 14),             # Increase legend title size
-    legend.text = element_text(size = 12)  
+    panel.spacing.x = unit(1, "cm"),
+    plot.title = element_text(size = 24, hjust = 0.5),  # Increase title size
+    legend.title = element_text(size = 24),             # Increase legend title size
+    legend.text = element_text(size = 24) ,
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5)
   )
 
 # ------------------------------------------------------------------------------
@@ -5950,7 +6002,7 @@ combined_plot <- annotate_figure(
   combined_plot,
   top = text_grob(
     "Observations vs. Predictions Across Imputation Methods and Missing Data Percentages", 
-    face = "bold", size = 18
+    face = "bold", size = 24
   )
 )
 
